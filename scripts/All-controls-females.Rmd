@@ -1,0 +1,716 @@
+---
+title: "All-controls-females"
+author: "Elisa Guma"
+date: "4/24/2022"
+output: html_document
+---
+#Description
+In this script we calculate group differences between XXY and XYY females relative to XY females.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Load libraries
+```{r }
+library(tidyverse)
+library(data.tree)
+library(RMINC)
+library(magrittr)
+library(ggplot2)
+library(MRIcrotome)
+library(PupillometryR)
+```
+
+# Load in data
+```{r}
+pathHome <- "/Users/gumae2/Documents/Humouse/"
+dfDemographics <- readRDS(str_c(pathHome, "input_data/", "gf2018noout.RDS"))
+treeVols_LR <- readRDS(str_c(pathHome, "input_data/", "SCT-vols-no-outliers.RDS"))
+
+source('/Users/gumae2/Documents/Humouse/input_data/tree_tools.R')
+class(treeVols_LR)
+```
+
+```{r}
+#Create a copy of the tree
+treeModel_LR <- Clone(treeVols_LR)
+```
+
+
+The function you want is pruneAnatTree(). The way it works is it takes node names and either prunes the tree at those nodes (i.e. removes them entirely), or below those nodes (i.e. removes all nodes below the given nodes). So if you want to prune the ventricles and fiber tracts, you would do
+```{r}
+bilat_tree_pruned <- Clone(treeModel_bilat)
+LR_tree_pruned <- Clone(treeVols_LR)
+nodes_to_cut <- c("ventricular systems", "fiber tracts") #remove ventricles and cranial nerves
+pruneAnatTree(bilat_tree_pruned, nodes = nodes_to_cut, method = "AtNode")
+pruneAnatTree(LR_tree_pruned, nodes = nodes_to_cut, method = "AtNode")
+```
+
+##Calculate total tissue volume
+### Females
+```{r}
+vols_bilat <- treeModel_bilat$Get("volumes") %>% as_tibble
+vols_LR <- treeModel_LR$Get("volumes") %>% as_tibble
+dat_bilat <- vols_bilat %>%  cbind(dfDemographics)
+dat_LR <- vols_LR %>%  cbind(dfDemographics)
+
+dfDemographics$shorthand <- recode_factor(dfDemographics$shorthand, XYF = "XY_MF", XXYF="XXY_MF", XYYF="XYY_MF")
+dfDemographics$ventricle_volume <- vols_LR$`ventricular systems`
+dfDemographics$total_tissue_volume<- dfDemographics$brainVolume - dfDemographics$ventricle_volume
+```
+
+##Z -scoring the total tissue volume of males relative to the XY males for the entire dataset
+```{r}
+ind <- dfDemographics$shorthand == "XY_MF"
+treeModel_LR$Do(function(node){
+node$ctrl_mean <- mean(node$volumes[ind])
+node$ctrl_sd <- sd(node$volumes[ind])
+node$zscores <- (node$volumes - node$ctrl_mean)/node$ctrl_sd
+})
+
+## zscore total tissue volume
+mu_ttv<- mean(dfDemographics$total_tissue_volume)
+sigma_ttv <- sd(dfDemographics$total_tissue_volume)
+dfDemographics$zscored_total_tissue_volume <- (dfDemographics$total_tissue_volume - mu_ttv)/sigma_ttv 
+```
+
+# Z-scored volumes
+
+## Z-scoring the XXY and XYY males relative to the XY males
+```{r}
+LR_tree_pruned$Do(function(node){
+#Attach metadata to the tree
+    node$dfDemographics <- dfDemographics
+}) 
+```
+
+### Zscore volumes outside of the tree to run a regular linear model
+```{r}
+#extract volumes
+#vols <- tree_pruned$Get("volumes", filterFun = isLeaf) %>% as_tibble
+vols_LR <- LR_tree_pruned$Get("volumes") %>% as_tibble
+#attach demographics
+dfVols_LR <- cbind(dfDemographics, vols_LR)
+#filter for XXY
+dfVols_LR_XXY  <- dfVols_LR %>%
+  filter(shorthand %in% c("XY_MF", "XXY_MF")) %>% 
+  mutate(shorthand = factor(shorthand, levels = c("XY_MF", "XXY_MF")))
+#filter for XYY
+dfVols_LR_XYY  <- dfVols_LR %>%
+  filter(shorthand %in% c("XY_MF", "XYY_MF")) %>% 
+  mutate(shorthand = factor(shorthand, levels = c("XY_MF", "XYY_MF")))
+```
+
+### zscore XXY, just leaves
+```{r}
+ind_XY_M <- dfVols_LR_XXY$shorthand == 'XY_MF' #First create an index getting the participants in the control group
+vol_cols_XXY <- dfVols_LR_XXY[,16:ncol(dfVols_LR_XXY)] #Then subset the volumes for the control observations #vols from 54:461
+XXY_demo <- dfVols_LR_XXY[,1:15]
+vols_XY_M <- vol_cols_XXY[ind_XY_M,]
+df_zscores_LR_XXY <- matrix(0, nrow = nrow(vol_cols_XXY), ncol = ncol(vol_cols_XXY))
+for(j in 1:ncol(vol_cols_XXY)){
+  mu <- mean(vols_XY_M[,j]) #Then you can compute the ROI-wise averages
+  sigma <- sd(vols_XY_M[,j]) #And standard deviations
+  df_zscores_LR_XXY[,j] <- (vol_cols_XXY[,j] - mu)/sigma #Then you can use those to make the z-score volumes
+}
+colnames(df_zscores_LR_XXY)<-colnames(vol_cols_XXY)
+df_zscore_LR_XXY <- XXY_demo %>% cbind(df_zscores_LR_XXY) 
+```
+
+
+### zscore XYY
+```{r}
+ind_XY_M <- dfVols_LR_XYY$shorthand == 'XY_MF' #First create an index getting the participants in the control group
+vol_cols_XYY <- dfVols_LR_XYY[,16:ncol(dfVols_LR_XYY)] #Then subset the volumes for the control observations #vols from 54:461
+XYY_demo <- dfVols_LR_XYY[,1:15]
+vols_XY_M <- vol_cols_XYY[ind_XY_M,]
+df_zscores_LR_XYY <- matrix(0, nrow = nrow(vol_cols_XYY), ncol = ncol(vol_cols_XYY))
+for(j in 1:ncol(vol_cols_XYY)){
+  mu <- mean(vols_XY_M[,j]) #Then you can compute the ROI-wise averages
+  sigma <- sd(vols_XY_M[,j]) #And standard deviations
+  df_zscores_LR_XYY[,j] <- (vol_cols_XYY[,j] - mu)/sigma #Then you can use those to make the z-score volumes
+}
+colnames(df_zscores_LR_XYY)<-colnames(vol_cols_XYY)
+df_zscore_LR_XYY <- XYY_demo %>% cbind(df_zscores_LR_XYY) 
+```
+
+```{r}
+saveRDS(df_zscore_LR_XXY, "/Users/gumae2/Documents/Humouse/input_data/Female_XXY_zscore_LRsplit.RDS")
+saveRDS(df_zscore_LR_XYY, "/Users/gumae2/Documents/Humouse/input_data/Female_XYY_zscore_LRsplit.RDS")
+```
+
+## Linear model for total tissue volume
+XXY
+```{r}
+linearmodel_tbv_XXY_F <- lm(zscored_total_tissue_volume ~ shorthand, data=df_zscore_LR_XXY)
+summary(linearmodel_tbv_XXY_F)
+```
+XYY
+```{r}
+linearmodel_tbv_XYY_F <- lm(zscored_total_tissue_volume ~ shorthand, data=df_zscore_LR_XYY)
+summary(linearmodel_tbv_XYY_F)
+```
+
+## Plot total tissue volume
+XXY
+```{r}
+# pdf(file = "/Users/gumae2/Documents/Humouse_paper/Figures/Females_XXY_M_TBV.pdf",   # The directory you want to save the file in
+#     width = 6, # The width of the plot in inches
+#     height = 4) # The height of the plot in inches
+
+ggplot(df_zscore_LR_XXY, aes(x = shorthand, y = zscored_total_tissue_volume, group=shorthand, colour=shorthand, fill=shorthand)) + 
+  geom_flat_violin(
+    position = position_nudge(x = .1, y = 0), 
+    alpha =.4,adjust =0.8)+
+  geom_boxplot(
+    width = .1, 
+    outlier.shape = NA,
+     alpha = .5
+  ) +
+  ## add justified jitter from the {gghalves} package
+  gghalves::geom_half_point(
+    ## draw jitter on the left
+    side = "l", 
+    ## control range of jitter
+    range_scale = .4, 
+    ## add some transparency
+    alpha = .3
+  ) +
+  #Adjust theme
+   scale_fill_manual(values=c("#BC526B", "#52BC6E"))+ #"#52BCA3"
+  scale_color_manual(values = c("#BC526B", "#52BC6E"))+  theme_classic()+
+   theme_classic()+
+  labs(
+    y="Total Tissue Volume (Z-scored)",
+    fill="shorthand")+  theme(text = element_text(size = 14))+ylim(-4, 4)+
+  scale_y_continuous(
+    sec.axis = sec_axis(name=expression(Total ~ Tissue ~ Volume ~ Volume~ (mm^3)), ~ (. * sigma_ttv) + mu_ttv), 
+    name="Total Tissue Volume (Z-scored)", limits=c(-4,4)) +
+  coord_cartesian(xlim = c(1.2, NA), clip = "off")
+
+pdf(file = "/Users/gumae2/Documents/Humouse_paper/Figures/Females_XXY_M_raw_TTV.pdf",   # The directory you want to save the file in
+    width = 6, # The width of the plot in inches
+    height = 4) # The height of the plot in inches
+
+ggplot(df_zscore_LR_XXY, aes(x = shorthand, y = total_tissue_volume, group=shorthand, colour=shorthand, fill=shorthand)) + 
+  geom_flat_violin(
+    position = position_nudge(x = .1, y = 0), 
+    alpha =.4,adjust =0.8)+
+  geom_boxplot(
+    width = .1, 
+    outlier.shape = NA,
+     alpha = .5
+  ) +
+  ## add justified jitter from the {gghalves} package
+  gghalves::geom_half_point(
+    ## draw jitter on the left
+    side = "l", 
+    ## control range of jitter
+    range_scale = .4, 
+    ## add some transparency
+    alpha = .3
+  ) +
+  #Adjust theme
+  scale_fill_manual(values=c("#BC526B", "#52BC6E"))+ #"#52BCA3"
+  scale_color_manual(values = c("#BC526B", "#52BC6E"))+
+  theme_classic()+
+  labs(
+    y=expression(Total ~ Tissue ~ Volume ~ Volume~ (mm^3)),
+    fill="shorthand")+ 
+   theme(text = element_text(size = 14))+ylim(350,480)+
+  coord_cartesian(xlim = c(1.2, NA), clip = "off")
+```
+
+XYY
+```{r}
+pdf(file = "/Users/gumae2/Documents/Humouse_paper/Figures/Female_XYY_M_TBV.pdf",   # The directory you want to save the file in
+    width = 6, # The width of the plot in inches
+    height = 4) # The height of the plot in inches
+
+ggplot(df_zscore_LR_XYY, aes(x = shorthand, y = zscored_total_tissue_volume, group=shorthand, colour=shorthand, fill=shorthand)) + 
+geom_flat_violin(
+    position = position_nudge(x = .1, y = 0), 
+    alpha =.4,adjust =0.8)+
+  geom_boxplot(
+    width = .1, 
+    outlier.shape = NA,
+     alpha = .5
+  ) +
+  ## add justified jitter from the {gghalves} package
+  gghalves::geom_half_point(
+    ## draw jitter on the left
+    side = "l", 
+    ## control range of jitter
+    range_scale = .4, 
+    ## add some transparency
+    alpha = .3
+  ) +
+  #Adjust theme
+   scale_fill_manual(values=c("#BC526B", "#5274bc"))+ 
+  scale_color_manual(values = c("#BC526B", "#5274bc"))+
+ theme_classic()+
+  labs(
+    y="Total Tissue Volume (Z-scored)",
+    fill="shorthand")+  theme(text = element_text(size = 14))+ylim(-4, 4)+
+  scale_y_continuous(
+    sec.axis = sec_axis(name=expression(Total ~ Tissue ~ Volume ~ Volume~ (mm^3)), ~ (. * sigma_ttv) + mu_ttv), 
+    name="Total Tissue Volume (Z-scored)", limits=c(-4,4)) +
+  coord_cartesian(xlim = c(1.2, NA), clip = "off") 
+
+pdf(file = "/Users/gumae2/Documents/Humouse_paper/Figures/Female_XYY_M_raw_TTV.pdf",   # The directory you want to save the file in
+    width = 6, # The width of the plot in inches
+    height = 4) # The height of the plot in inches
+
+ggplot(df_zscore_LR_XYY, aes(x = shorthand, y = total_tissue_volume, group=shorthand, colour=shorthand, fill=shorthand)) + 
+geom_flat_violin(
+    position = position_nudge(x = .1, y = 0), 
+    alpha =.4,adjust =0.8)+
+  geom_boxplot(
+    width = .1, 
+    outlier.shape = NA,
+     alpha = .5
+  ) +
+  ## add justified jitter from the {gghalves} package
+  gghalves::geom_half_point(
+    ## draw jitter on the left
+    side = "l", 
+    ## control range of jitter
+    range_scale = .4, 
+    ## add some transparency
+    alpha = .3
+  ) +
+  #Adjust theme
+    scale_fill_manual(values=c("#BC526B", "#5274bc"))+ 
+   scale_color_manual(values = c("#BC526B", "#5274bc"))+
+theme_classic()+
+  labs(
+    y=expression(Total ~ Tissue ~ Volume ~ Volume~ (mm^3)),
+    fill="shorthand")+ 
+   theme(text = element_text(size = 14))+ylim(350,480)+
+  coord_cartesian(xlim = c(1.2, NA), clip = "off")
+```
+
+
+
+## Perform Linear Models
+### With TBV covariate
+XXY
+```{r}
+XXY_wTBV_LR_zscore= anatLm(~ shorthand + zscored_total_tissue_volume,df_zscore_LR_XXY,df_zscore_LR_XXY[,16:ncol(df_zscore_LR_XXY)])
+FDR_XXY_wTBV_LR_zscore <- anatFDR(XXY_wTBV_LR_zscore)
+FDR_XXY_wTBV_LR_zscore
+```
+
+XYY
+```{r}
+XYY_wTBV_LR_zscore= anatLm(~ shorthand + zscored_total_tissue_volume,df_zscore_LR_XYY,df_zscore_LR_XYY[,16:ncol(df_zscore_LR_XYY)])
+FDR_XYY_wTBV_LR_zscore <- anatFDR(XYY_wTBV_LR_zscore)
+FDR_XYY_wTBV_LR_zscore
+```
+
+### Without TBV covariate
+XXY
+```{r}
+XXY_noTBV_LR_zscore= anatLm(~ shorthand, df_zscore_LR_XXY,df_zscore_LR_XXY[,16:ncol(df_zscore_LR_XXY)])
+FDR_XXY_noTBV_LR_zscore <- anatFDR(XXY_noTBV_LR_zscore)
+FDR_XXY_noTBV_LR_zscore
+```
+XYY
+```{r}
+XYY_noTBV_LR_zscore= anatLm(~ shorthand,df_zscore_LR_XYY,df_zscore_LR_XYY[,16:ncol(df_zscore_LR_XYY)])
+FDR_XYY_noTBV_LR_zscore <- anatFDR(XYY_noTBV_LR_zscore)
+#summary_XYY_noTBV_zscore <- summary(XYY_noTBV_zscore)
+FDR_XYY_noTBV_LR_zscore
+```
+
+
+## Calculate zscores across all nodes in the tree, run the model, and extract the beta coefficients
+```{r}
+#Run our anonymous function at every node
+LR_tree_pruned$Do(function(node){
+#Run our anonymous function at every node
+#tree_pruned$Do(function(node){
+  #Assign 
+  node$dfModel <- dfDemographics %>%
+    dplyr::select(sex, shorthand, brainVolume, total_tissue_volume)
+
+  #Create a data frame that contains sex, shorthand, brainVolume, and volumes
+  node$dfModel <- node$dfModel %>%
+    mutate(volumes = node$volumes)
+  
+  #Filter for females and not XXF
+  node$dfModel <- node$dfModel %>%
+    filter(sex == "F",
+           shorthand != "XXF")
+
+  #Create a separate data frame for XXY_MF
+  node$dfModel_XXY_MF  <- node$dfModel %>%
+    filter(shorthand %in% c("XY_MF", "XXY_MF"))
+  
+  #Create a separate data frame for XYY_MF
+  node$dfModel_XYY_MF  <- node$dfModel %>%
+    filter(shorthand %in% c("XY_MF", "XYY_MF"))
+
+  #Level the shorthand variables as desired
+  node$dfModel_XXY_MF <- node$dfModel_XXY_MF %>% 
+    mutate(shorthand = factor(shorthand, levels = c("XY_MF", "XXY_MF")))
+  node$dfModel_XYY_MF <- node$dfModel_XYY_MF %>% 
+    mutate(shorthand = factor(shorthand, levels = c("XY_MF", "XYY_MF")))
+
+  #Compute the volume mean for XXY_MF controls
+  node$meanVolume_XXY_MF <- node$dfModel_XXY_MF %>% 
+    filter(shorthand == "XY_MF") %>%  #Filter for controls
+    pull(volumes) %>%               #Extract the column volumes as a vector
+    mean()                          #Calculate the mean on the volumes vector
+  
+  #Compute the volume sd for XXY_MF controls
+  node$sdVolume_XXY_MF <- node$dfModel_XXY_MF %>% 
+    filter(shorthand == "XY_MF") %>% 
+    pull(volumes) %>% 
+    sd()
+ 
+  #Compute the total volume mean for XXY_MF controls
+  node$meanTotalVolume_XXY_MF <- node$dfModel_XXY_MF %>% 
+    filter(shorthand == "XY_MF") %>% 
+    pull(brainVolume) %>% 
+    mean()
+ 
+  #Compute the total volume sd for XXY_MF controls
+  node$sdTotalVolume_XXY_MF <- node$dfModel_XXY_MF %>% 
+    filter(shorthand == "XY_MF") %>% 
+    pull(brainVolume) %>% 
+    sd()
+  
+   #Compute the total tissue volume mean for XXY_MF controls
+  node$meanTotalTissueVolume_XXY_MF <- node$dfModel_XXY_MF %>% 
+    filter(shorthand == "XY_MF") %>% 
+    pull(total_tissue_volume) %>% 
+    mean()
+ 
+  #Compute the total tissue volume sd for XXY_MF controls
+  node$sdTotalTissueVolume_XXY_MF <- node$dfModel_XXY_MF %>% 
+    filter(shorthand == "XY_MF") %>% 
+    pull(total_tissue_volume) %>% 
+    sd()
+  
+  #Compute the volume mean for XYY_MF controls
+  node$meanVolume_XYY_MF <- node$dfModel_XYY_MF %>% 
+    filter(shorthand == "XY_MF") %>%  #Filter for controls
+    pull(volumes) %>%               #Extract the column volumes as a vector
+    mean()                          #Calculate the mean on the volumes vector
+  
+  #Compute the volume sd for XYY_MF controls
+  node$sdVolume_XYY_MF <- node$dfModel_XYY_MF %>% 
+    filter(shorthand == "XY_MF") %>% 
+    pull(volumes) %>% 
+    sd()
+  
+  #Compute the total volume mean for XYY_MF controls
+  node$meanTotalVolume_XYY_MF <- node$dfModel_XYY_MF %>% 
+    filter(shorthand == "XY_MF") %>% 
+    pull(brainVolume) %>% 
+    mean()
+  
+  #Compute the total volume sd for XYY_MF controls
+  node$sdTotalVolume_XYY_MF <- node$dfModel_XYY_MF %>% 
+    filter(shorthand == "XY_MF") %>% 
+    pull(brainVolume) %>% 
+    sd()
+
+    #Compute the total volume mean for XYY_MF controls
+  node$meanTotalTissueVolume_XYY_MF <- node$dfModel_XYY_MF %>% 
+    filter(shorthand == "XY_MF") %>% 
+    pull(total_tissue_volume) %>% 
+    mean()
+  
+  #Compute the total volume sd for XYY_MF controls
+  node$sdTotalTissueVolume_XYY_MF <- node$dfModel_XYY_MF %>% 
+    filter(shorthand == "XY_MF") %>% 
+    pull(total_tissue_volume) %>% 
+    sd()
+
+  #Compute z-scores for XXY_MF
+  node$dfModel_XXY_MF <- node$dfModel_XXY_MF %>% 
+    mutate(volumes_zscore = (volumes - node$meanVolume_XXY_MF)/node$sdVolume_XXY_MF,
+           brainVolume_zscore = (brainVolume - node$meanTotalVolume_XXY_MF)/node$sdTotalVolume_XXY_MF,
+           totalTissueVol_zscore= (total_tissue_volume - node$meanTotalTissueVolume_XXY_MF)/node$sdTotalTissueVolume_XXY_MF)
+  
+  #Compute z-scores for XYY_MF
+  node$dfModel_XYY_MF <- node$dfModel_XYY_MF %>% 
+    mutate(volumes_zscore = (volumes - node$meanVolume_XYY_MF)/node$sdVolume_XYY_MF,
+           brainVolume_zscore = (brainVolume - node$meanTotalVolume_XYY_MF)/node$sdTotalVolume_XYY_MF,
+           totalTissueVol_zscore= (total_tissue_volume - node$meanTotalTissueVolume_XYY_MF)/node$sdTotalTissueVolume_XYY_MF)
+
+  #Compute linear models with TBV correction
+  node$model_XXY_MF_wTBV <- lm(volumes_zscore ~ shorthand + totalTissueVol_zscore, data = node$dfModel_XXY_MF)
+  node$model_XYY_MF_wTBV <- lm(volumes_zscore ~ shorthand + totalTissueVol_zscore, data = node$dfModel_XYY_MF)
+
+  #Compute linear models without TBV correction
+  node$model_XXY_MF_noTBV <- lm(volumes_zscore ~ shorthand, data = node$dfModel_XXY_MF)
+  node$model_XYY_MF_noTBV <- lm(volumes_zscore ~ shorthand, data = node$dfModel_XYY_MF)
+ 
+  #Compute linear model summaries
+  #with TBV
+  node$model_summary_XXY_MF_wTBV  <- summary(node$model_XXY_MF_wTBV )
+  node$model_summary_XYY_MF_wTBV  <- summary(node$model_XYY_MF_wTBV )
+  #without TBV
+  node$model_summary_XXY_MF_noTBV  <- summary(node$model_XXY_MF_noTBV )
+  node$model_summary_XYY_MF_noTBV  <- summary(node$model_XYY_MF_noTBV )
+
+  #Extract shorthand beta parameter estimates
+  #with TBV
+  node$beta_shorthand_XXY_MF_wTBV  <- node$model_summary_XXY_MF_wTBV $coefficients["shorthandXXY_MF", "Estimate"]
+  node$beta_shorthand_XYY_MF_wTBV  <- node$model_summary_XYY_MF_wTBV $coefficients["shorthandXYY_MF", "Estimate"]
+  node$tvalue_shorthand_XXY_MF_wTBV  <- node$model_summary_XXY_MF_wTBV $coefficients["shorthandXXY_MF", "t value"]
+  node$tvalue_shorthand_XYY_MF_wTBV  <- node$model_summary_XYY_MF_wTBV $coefficients["shorthandXYY_MF", "t value"]
+  node$pvalue_shorthand_XXY_MF_wTBV  <- node$model_summary_XXY_MF_wTBV $coefficients["shorthandXXY_MF", "Pr(>|t|)"]
+  node$pvalue_shorthand_XYY_MF_wTBV  <- node$model_summary_XYY_MF_wTBV $coefficients["shorthandXYY_MF", "Pr(>|t|)"]
+ 
+  #no TBV
+  node$beta_shorthand_XXY_MF_noTBV  <- node$model_summary_XXY_MF_noTBV $coefficients["shorthandXXY_MF", "Estimate"]
+  node$beta_shorthand_XYY_MF_noTBV  <- node$model_summary_XYY_MF_noTBV $coefficients["shorthandXYY_MF", "Estimate"]
+  node$tvalue_shorthand_XXY_MF_noTBV  <- node$model_summary_XXY_MF_noTBV $coefficients["shorthandXXY_MF", "t value"]
+  node$tvalue_shorthand_XYY_MF_noTBV  <- node$model_summary_XYY_MF_noTBV $coefficients["shorthandXYY_MF", "t value"]
+  node$pvalue_shorthand_XXY_MF_noTBV  <- node$model_summary_XXY_MF_noTBV $coefficients["shorthandXXY_MF", "Pr(>|t|)"]
+  node$pvalue_shorthand_XYY_MF_noTBV  <- node$model_summary_XYY_MF_noTBV $coefficients["shorthandXYY_MF", "Pr(>|t|)"]
+ })
+```
+
+
+If we want to extract those values from the tree, we can use the $Get() method. This “gets” the field specified for every node:
+```{r}
+#With TBV correction
+totalTissueVolume <- LR_tree_pruned$Get("totalTissueVol_zscore")
+beta_shorthand_XXY_MF_wTBV <- LR_tree_pruned$Get("beta_shorthand_XXY_MF_wTBV") 
+beta_shorthand_XYY_MF_wTBV <- LR_tree_pruned$Get("beta_shorthand_XYY_MF_wTBV")  
+tvalue_shorthand_XXY_MF_wTBV <- LR_tree_pruned$Get("tvalue_shorthand_XXY_MF_wTBV") 
+tvalue_shorthand_XYY_MF_wTBV <- LR_tree_pruned$Get("tvalue_shorthand_XYY_MF_wTBV")
+pvalue_shorthand_XXY_MF_wTBV <- LR_tree_pruned$Get("pvalue_shorthand_XXY_MF_wTBV") 
+pvalue_shorthand_XYY_MF_wTBV <- LR_tree_pruned$Get("pvalue_shorthand_XYY_MF_wTBV") 
+#Without TBV correction
+beta_shorthand_XXY_MF_noTBV <- LR_tree_pruned$Get("beta_shorthand_XXY_MF_noTBV")
+beta_shorthand_XYY_MF_noTBV <- LR_tree_pruned$Get("beta_shorthand_XYY_MF_noTBV")
+tvalue_shorthand_XXY_MF_noTBV <- LR_tree_pruned$Get("tvalue_shorthand_XXY_MF_noTBV") 
+tvalue_shorthand_XYY_MF_noTBV <- LR_tree_pruned$Get("tvalue_shorthand_XYY_MF_noTBV") 
+pvalue_shorthand_XXY_MF_noTBV <- LR_tree_pruned$Get("pvalue_shorthand_XXY_MF_noTBV") 
+pvalue_shorthand_XYY_MF_noTBV <- LR_tree_pruned$Get("pvalue_shorthand_XYY_MF_noTBV") 
+```
+
+
+```{r}
+## Save z-scored data as an RDS file
+saveRDS(beta_shorthand_XXY_MF_wTBV, "/Users/gumae2/Documents/Humouse/input_data/female_XXY_beta_values_LRsplit.RDS")
+saveRDS(beta_shorthand_XYY_MF_wTBV, "/Users/gumae2/Documents/Humouse/input_data/female_XYY_beta_values_LRsplit.RDS")
+```
+
+XXY with TBV correction
+```{r}
+## Threshold at p=0.05
+df_pvalue_shorthand_XXY_MF_wTBV <- pvalue_shorthand_XXY_MF_wTBV %>% enframe(name = "Region", value = "pvalue_shorthand_XXY_MF_wTBV") %>% as_tibble()
+df_beta_shorthand_XXY_MF_wTBV <- beta_shorthand_XXY_MF_wTBV %>% enframe(name = "Region", value = "beta_shorthand_XXY_MF_wTBV") %>% as_tibble()
+
+sig_pvalues_pos_XXY_wTBV <- df_pvalue_shorthand_XXY_MF_wTBV$pvalue_shorthand_XXY_MF_wTBV < 0.048
+sig_pvalues_neg_XXY_wTBV <- df_pvalue_shorthand_XXY_MF_wTBV$pvalue_shorthand_XXY_MF_wTBV< -0.048
+sig_beta_XXY_wTBV <- df_beta_shorthand_XXY_MF_wTBV[sig_pvalues_pos_XXY_wTBV | sig_pvalues_neg_XXY_wTBV, ]
+
+sig_beta_XXY_tree<-left_join(df_beta_shorthand_XXY_MF_wTBV, sig_beta_XXY_wTBV, by = "Region")
+filtered_sig_beta_XXY_tree <- subset(sig_beta_XXY_tree, select = c("Region","beta_shorthand_XXY_MF_wTBV.y"))
+sig_beta_XXY_wTBV$Region
+
+LR_tree_pruned$Do(function(node){
+  ind <- which(filtered_sig_beta_XXY_tree$Region == node$name)
+  node$XXY_beta_p05_wTBV <- filtered_sig_beta_XXY_tree$beta_shorthand_XXY_MF_wTBV.y[ind]
+})
+```
+
+
+XYY with TBV correction
+```{r}
+## Threshold at p=0.05
+df_pvalue_shorthand_XYY_MF_wTBV <- pvalue_shorthand_XYY_MF_wTBV %>% enframe(name = "Region", value = "pvalue_shorthand_XYY_MF_wTBV") %>% as_tibble()
+df_beta_shorthand_XYY_MF_wTBV <- beta_shorthand_XYY_MF_wTBV %>% enframe(name = "Region", value = "beta_shorthand_XYY_MF_wTBV") %>% as_tibble()
+
+sig_pvalues_pos_XYY_wTBV <- df_pvalue_shorthand_XYY_MF_wTBV$pvalue_shorthand_XYY_MF_wTBV < 0.049
+sig_pvalues_neg_XYY_wTBV <- df_pvalue_shorthand_XYY_MF_wTBV$pvalue_shorthand_XYY_MF_wTBV< -0.049
+sig_beta_XYY_wTBV <- df_beta_shorthand_XYY_MF_wTBV[sig_pvalues_pos_XYY_wTBV | sig_pvalues_neg_XYY_wTBV, ]
+
+sig_beta_XYY_wTBV_tree<-left_join(df_beta_shorthand_XYY_MF_wTBV, sig_beta_XYY_wTBV, by = "Region")
+filtered_sig_beta_XYY_wTBV_tree <- subset(sig_beta_XYY_wTBV_tree, select = c("Region","beta_shorthand_XYY_MF_wTBV.y"))
+sig_beta_XYY_wTBV$Region
+
+LR_tree_pruned$Do(function(node){
+  ind <- which(filtered_sig_beta_XYY_wTBV_tree$Region == node$name)
+  node$XYY_beta_p05_wTBV <- filtered_sig_beta_XYY_wTBV_tree$beta_shorthand_XYY_MF_wTBV.y[ind]
+})
+```
+
+
+## and read in the label and anatomical volumes
+```{r} 
+labelVol <- mincArray(mincGetVolume("/Users/gumae2/Documents/Humouse/input_data/DSURQE_40micron_labels.mnc"))
+anatVol <- mincArray(mincGetVolume("/Users/gumae2/Documents/Humouse/input_data/DSURQE_40micron_average.mnc"))
+labelCols <- hanatToVolume(treeModel_LR, labelVol, "color_hex_triplet") #load in the Allen atlas colours to display next to the results
+```
+
+```{r}
+positive_cols <- function() {
+  getOption("MRIcrotomeCol", colorRampPalette(c("yellow","red","firebrick"))(255))
+}
+
+negative_cols <- function() {
+  getOption("MRIcrotomeRcol", colorRampPalette(c("turquoise3","royalblue","navyblue"))(255))
+}
+```
+
+
+Beta-value plots for XXY and XYY with TBV correction
+```{r}
+## load in beta values from the tree
+XXY_MF_beta_wTBV_unthresholded <- hanatToVolume(LR_tree_pruned, labelVol, "beta_shorthand_XXY_MF_wTBV")
+XXY_MF_beta_wTBV_p05 <- hanatToVolume(LR_tree_pruned, labelVol, "XXY_beta_p05_wTBV") #turn the t-value back into a volume file
+
+XYY_MF_beta_wTBV_unthresholded <- hanatToVolume(LR_tree_pruned, labelVol, "beta_shorthand_XYY_MF_wTBV") #turn the t-value back into a volume file
+XYY_MF_beta_wTBV_p05 <- hanatToVolume(LR_tree_pruned, labelVol, "XYY_beta_p05_wTBV") #turn the t-value back into a volume file
+
+pdf(file = "/Users/gumae2/Documents/Humouse_paper/Figures/mouse_unilateral/Female_XXY_XYY_wTBV_nowm_LR_split_8.pdf",   # The directory you want to save the file in
+    width = 7.5, # The width of the plot in inches
+    height = 6.5) # The height of the plot in inches
+sliceSeries(nrow=8, ncol=1, begin=70, end=350) %>%
+  anatomy(anatVol, low=700, high=1400) %>% overlay(labelCols, low=0, high=1) %>% addtitle("Atlas") %>% 
+  sliceSeries() %>% anatomy() %>%
+  overlay(XXY_MF_beta_wTBV_unthresholded, low=0, high=1.5, col = positive_cols(), rCol=negative_cols(), symmetric = T) %>% addtitle("XXY_M") %>% 
+  sliceSeries() %>% anatomy() %>%
+  overlay(XXY_MF_beta_wTBV_p05, low=0, high=1.5, col = positive_cols(), rCol=negative_cols(), symmetric = T) %>%
+  addtitle("p<0.05") %>% 
+  sliceSeries() %>% anatomy() %>%
+  overlay(XYY_MF_beta_wTBV_unthresholded, low=0, high=1.5, col = positive_cols(), rCol=negative_cols(), symmetric = T) %>% addtitle("XYY_M ") %>% 
+  sliceSeries() %>% anatomy() %>%
+  overlay(XYY_MF_beta_wTBV_p05, low=0, high=1.5, col = positive_cols(), rCol=negative_cols(), symmetric = T) %>%
+  legend("Beta-value (with TTV correction") %>% addtitle("p<0.05") %>% draw()
+```
+
+
+
+## Results without TBV correction
+### Thresholded maps at p=0.05 without TBV correction
+XXY without TBV
+```{r}
+## Threshold at p=0.05
+df_pvalue_shorthand_XXY_MF_noTBV <- pvalue_shorthand_XXY_MF_noTBV %>% enframe(name = "Region", value = "pvalue_shorthand_XXY_MF_noTBV") %>% as_tibble()
+df_beta_shorthand_XXY_MF_noTBV <- beta_shorthand_XXY_MF_noTBV %>% enframe(name = "Region", value = "beta_shorthand_XXY_MF_noTBV") %>% as_tibble()
+
+sig_pvalues_pos_XXY_noTBV <- df_pvalue_shorthand_XXY_MF_noTBV$pvalue_shorthand_XXY_MF_noTBV < 0.049
+sig_pvalues_neg_XXY_noTBV <- df_pvalue_shorthand_XXY_MF_noTBV$pvalue_shorthand_XXY_MF_noTBV< -0.049
+sig_beta_XXY_noTBV <- df_beta_shorthand_XXY_MF_noTBV[sig_pvalues_pos_XXY_noTBV | sig_pvalues_neg_XXY_noTBV, ]
+
+sig_beta_XXY_treenoTBV<-left_join(df_beta_shorthand_XXY_MF_noTBV, sig_beta_XXY_noTBV, by = "Region")
+filtered_sig_beta_XXY_treenoTBV <- subset(sig_beta_XXY_treenoTBV, select = c("Region","beta_shorthand_XXY_MF_noTBV.y"))
+sig_beta_XXY_noTBV$Region
+
+LR_tree_pruned$Do(function(node){
+  ind <- which(filtered_sig_beta_XXY_treenoTBV$Region == node$name)
+  node$XXY_beta_p05_noTBV <- filtered_sig_beta_XXY_treenoTBV$beta_shorthand_XXY_MF_noTBV.y[ind]
+})
+```
+
+XYY without TBV
+```{r}
+## Threshold at p=0.05
+df_pvalue_shorthand_XYY_MF_noTBV <- pvalue_shorthand_XYY_MF_noTBV %>% enframe(name = "Region", value = "pvalue_shorthand_XYY_MF_noTBV") %>% as_tibble()
+df_beta_shorthand_XYY_MF_noTBV <- beta_shorthand_XYY_MF_noTBV %>% enframe(name = "Region", value = "beta_shorthand_XYY_MF_noTBV") %>% as_tibble()
+
+sig_pvalues_pos_XYY_noTBV <- df_pvalue_shorthand_XYY_MF_noTBV$pvalue_shorthand_XYY_MF_noTBV < 0.049
+sig_pvalues_neg_XYY_noTBV <- df_pvalue_shorthand_XYY_MF_noTBV$pvalue_shorthand_XYY_MF_noTBV< -0.049
+sig_beta_XYY_noTBV <- df_beta_shorthand_XYY_MF_noTBV[sig_pvalues_pos_XYY_noTBV | sig_pvalues_neg_XYY_noTBV, ]
+
+sig_beta_XYY_noTBV_tree<-left_join(df_beta_shorthand_XYY_MF_noTBV, sig_beta_XYY_noTBV, by = "Region")
+filtered_sig_beta_XYY_noTBV_tree <- subset(sig_beta_XYY_noTBV_tree, select = c("Region","beta_shorthand_XYY_MF_noTBV.y"))
+sig_beta_XYY_noTBV$Region
+
+LR_tree_pruned$Do(function(node){
+  ind <- which(filtered_sig_beta_XYY_noTBV_tree$Region == node$name)
+  node$XYY_beta_p05_noTBV <- filtered_sig_beta_XYY_noTBV_tree$beta_shorthand_XYY_MF_noTBV.y[ind]
+})
+```
+
+Beta-value plots for XXY and XYY with TBV correction
+```{r}
+## load in beta values from the tree
+XXY_MF_beta_noTBV_unthresholded <- hanatToVolume(LR_tree_pruned, labelVol, "beta_shorthand_XXY_MF_noTBV") #turn the b-value back into a volume file
+XXY_MF_beta_noTBV_p05 <- hanatToVolume(LR_tree_pruned, labelVol, "XXY_beta_p05_noTBV") #turn the t-value back into a volume file
+
+XYY_MF_beta_noTBV_unthresholded <- hanatToVolume(LR_tree_pruned, labelVol, "beta_shorthand_XYY_MF_noTBV") #turn the t-value back into a volume file
+XYY_MF_beta_noTBV_p05 <- hanatToVolume(LR_tree_pruned, labelVol, "XYY_beta_p05_noTBV") #turn the t-value back into a volume file
+
+pdf(file = "/Users/gumae2/Documents/Humouse_paper/Figures/mouse_unilateral/Female_XXY_XYY_noTBV_nowm_LRsplit_8.pdf",   # The directory you want to save the file in
+   width = 7.5, # The width of the plot in inches
+    height = 6.5) # The height of the plot in inches
+sliceSeries(nrow=8, ncol=1, begin=70, end=350) %>%
+  anatomy(anatVol, low=700, high=1400) %>% overlay(labelCols, low=0, high=1) %>% addtitle("Atlas") %>% 
+  sliceSeries() %>% anatomy() %>%
+  overlay(XXY_MF_beta_noTBV_unthresholded, low=0, high=1.5, col = positive_cols(), rCol=negative_cols(), symmetric = T) %>% addtitle("XXY_M") %>% 
+  sliceSeries() %>% anatomy() %>%
+  overlay(XXY_MF_beta_noTBV_p05, low=0, high=1.5, col = positive_cols(), rCol=negative_cols(), symmetric = T) %>%
+  addtitle("p<0.05") %>% 
+  sliceSeries() %>% anatomy() %>%
+  overlay(XYY_MF_beta_noTBV_unthresholded, low=0, high=1.5, col = positive_cols(), rCol=negative_cols(), symmetric = T) %>% addtitle("XYY_M ") %>% 
+  sliceSeries() %>% anatomy() %>%
+  overlay(XYY_MF_beta_noTBV_p05, low=0, high=1.5, col = positive_cols(), rCol=negative_cols(), symmetric = T) %>%
+  legend("Beta-value (with TTV correction") %>% addtitle("p<0.05") %>% draw()
+```
+
+## Density plot of beta values with TBV
+```{r}
+library(reshape2)
+# plot
+pdf(file = "/Users/gumae2/Documents/Humouse_paper/Figures/mouse_unilateral/Female_XXY_XYY_mean_beta_density_wTBV_nowm.pdf",
+     width = 5,
+     height = 4)
+
+##With TBV
+## merge the dataframes with beta values for the leaves (with TBV correction)
+betas <- cbind(beta_shorthand_XXY_MF_wTBV, beta_shorthand_XYY_MF_wTBV)
+label <- LR_tree_pruned$Get("name") %>% as_tibble()
+df_betas <-cbind(label, betas) 
+colnames(df_betas) <- c("label", "XXY_MF", "XYY_MF")
+## stack the columns containing the beta values for plotting
+df_betas_long <- melt(df_betas, id.var = c('label'), variable.name = 'beta_value')
+## calculate the mean per group to plot the vertical line
+df_beta_long_1 <-df_betas_long %>% group_by(beta_value) %>% summarize(mean=mean(value))
+## plot
+ggplot(df_betas_long, aes(x=value, fill=beta_value, color=beta_value)) +
+    geom_density(alpha=.3) +
+    scale_fill_manual(labels = c("XXY_MF", "XYY_MF"), name="Beta", values=c('#52BCA3', '#6e52bc'))+
+    scale_color_manual(label=NULL,name=NULL,guide=NULL, values = c('#52BCA3', '#6e52bc'))+
+    theme_classic()+ xlab("Beta-value (with TTV correction)")+ylab("Density")+
+    theme(text = element_text(size = 14))+xlim(-1.5,1.5)+ylim(0,2.1)+
+    geom_vline(data=df_beta_long_1, aes(xintercept=mean, color=beta_value),
+             linetype="dashed") +
+    geom_vline(xintercept=c(0))
+```
+## Without TBV correction
+```{r}
+##NO TBV
+pdf(file = "/Users/gumae2/Documents/Humouse_paper/Figures/mouse_unilateral/Female_XXY_XYY_mean_beta_density_noTBV_nowm.pdf",
+     width = 5,
+     height = 4)
+
+betas_noTBV <- cbind(beta_shorthand_XXY_MF_noTBV, beta_shorthand_XYY_MF_noTBV)
+df_betas_noTBV <-cbind(label, betas_noTBV) 
+colnames(df_betas_noTBV) <- c("label", "XXY_MF", "XYY_MF")
+## stack the columns containing the beta values for plotting
+df_betas_long_noTBV <- melt(df_betas_noTBV, id.var = c('label'), variable.name = 'beta_value')
+## calculate the mean per group to plot the vertical line
+df_beta_noTBV_long_1 <-df_betas_long_noTBV %>% group_by(beta_value) %>% summarize(mean=mean(value))
+## plot
+ggplot(df_betas_long_noTBV, aes(x=value, fill=beta_value, color=beta_value)) +
+    geom_density(alpha=.3) +
+    geom_vline(data=df_beta_noTBV_long_1, aes(xintercept=mean, color=beta_value),
+             linetype="dashed")+
+ scale_fill_manual(labels = c("XXY_MF", "XYY_MF"), name="Beta",values=c('#52BCA3', '#6e52bc'))+
+  scale_color_manual(label=NULL,name=NULL,guide=NULL,values = c('#52BCA3', '#6e52bc'))+
+   theme_classic()+ xlab("Beta-value (no TTV correction)")+ylab("Density")+
+   theme(text = element_text(size = 14))+xlim(-1.5,1.5)+ylim(0,2)+
+    geom_vline(xintercept=c(0))
+```
