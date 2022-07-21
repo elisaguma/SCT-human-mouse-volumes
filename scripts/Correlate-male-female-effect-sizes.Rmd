@@ -1,0 +1,91 @@
+---
+title: "Correlate male and female effects"
+author: "Elisa Guma"
+date: "7/14/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Import libraries
+```{r }
+library(tidyverse)
+library(data.tree)
+library(RMINC)
+library(magrittr)
+library(ggplot2)
+library(MRIcrotome)
+library(ggpubr)
+library(raincloudplots)
+library(cowplot)
+library(readr)
+library(PupillometryR)
+library(colortools)
+```
+
+#import data
+```{r}
+#gonadal males
+beta_shorthand_XXY_M_wTBV<- readRDS("/Users/gumae2/Documents/Humouse/input_data/male_XXY_beta_values_LRsplit.RDS")
+beta_shorthand_XYY_M_wTBV<- readRDS("/Users/gumae2/Documents/Humouse/input_data/male_XYY_beta_values_LRsplit.RDS")
+#gonadal females
+beta_shorthand_XXY_MF_wTBV<- readRDS("/Users/gumae2/Documents/Humouse/input_data/female_XXY_beta_values_LRsplit.RDS")
+beta_shorthand_XYY_MF_wTBV<- readRDS("/Users/gumae2/Documents/Humouse/input_data/female_XYY_beta_values_LRsplit.RDS")
+```
+
+
+## Correlate male and female effects
+```{r}
+summary(cor(beta_shorthand_XXY_M_wTBV, beta_shorthand_XXY_M_wTBV))
+male_female_XXY_wTBV<-as.data.frame(cbind(beta_shorthand_XXY_M_wTBV, beta_shorthand_XXY_MF_wTBV))
+malefemaleXXY_wTBV <- ggplot(male_female_XXY_wTBV, aes(x=beta_shorthand_XXY_M_wTBV, y=beta_shorthand_XXY_MF_wTBV)) + 
+  geom_point(size=2, alpha=0.8) + geom_smooth(method=lm)  + geom_abline() + 
+  theme_classic()+xlab("Beta XXY_M male")+ ylab("Beta XXY_M female")+
+  theme(axis.text=element_text(size=12),
+        axis.title=element_text(size=14))+ 
+  xlim(-1,1) + ylim(-1,1)
+
+summary(cor(beta_shorthand_XYY_M_wTBV, beta_shorthand_XYY_MF_wTBV))
+male_female_XYY_wTBV<-as.data.frame(cbind(beta_shorthand_XYY_M_wTBV, beta_shorthand_XYY_MF_wTBV))
+malefemaleXYY_wTBV <- ggplot(male_female_XYY_wTBV, aes(x=beta_shorthand_XYY_M_wTBV, y=beta_shorthand_XYY_MF_wTBV)) + 
+  geom_point(size=2, alpha=0.8) + geom_smooth(method=lm)  + geom_abline() + 
+  theme_classic()+xlab("Beta XYY_M male")+ ylab("Beta XYY_M female")+
+  theme(axis.text=element_text(size=12),
+        axis.title=element_text(size=14))+ 
+  xlim(-1,1) + ylim(-1,1)
+
+
+# pdf(file = "/Users/gumae2/Documents/Humouse_paper/Figures/mouse_unilateral/Male_female_XXY_wTBV.pdf",
+#      width = 8,
+#      height = 4)
+ggarrange(malefemaleXXY_wTBV, malefemaleXYY_wTBV, 
+          labels = c("A.", "B."),
+          ncol = 2)
+
+summary(cor(beta_shorthand_XXY_M_noTBV, beta_shorthand_XXY_MF_noTBV))
+male_female_XXY_noTBV<-as.data.frame(cbind(beta_shorthand_XXY_M_noTBV, beta_shorthand_XXY_MF_noTBV))
+malefemaleXXY_noTBV <- ggplot(male_female_XXY_noTBV, aes(x=beta_shorthand_XXY_M_noTBV, y=beta_shorthand_XXY_MF_noTBV)) + 
+  geom_point(size=2, alpha=0.8) + geom_smooth(method=lm)  + geom_abline() + 
+  theme_classic()+xlab("Beta XXY_M male")+ ylab("Beta XXY_M female")+
+  theme(axis.text=element_text(size=12),
+        axis.title=element_text(size=14))+ 
+  xlim(-1,1) + ylim(-1,1)
+
+summary(cor(beta_shorthand_XYY_M_noTBV, beta_shorthand_XYY_MF_noTBV))
+male_female_XYY_noTBV<-as.data.frame(cbind(beta_shorthand_XYY_M_noTBV, beta_shorthand_XYY_MF_noTBV))
+malefemaleXYY_noTBV <- ggplot(male_female_XYY_noTBV, aes(x=beta_shorthand_XYY_M_noTBV, y=beta_shorthand_XYY_MF_noTBV)) + 
+  geom_point(size=2, alpha=0.8) + geom_smooth(method=lm)  + geom_abline() + 
+  theme_classic()+xlab("Beta XXY_M male")+ ylab("Beta XXY_M female")+
+  theme(axis.text=element_text(size=12),
+        axis.title=element_text(size=14))+ 
+  xlim(-1,1) + ylim(-1,1)
+
+# pdf(file = "/Users/gumae2/Documents/Humouse_paper/Figures/mouse_unilateral/Male_female_XXY_noTBV.pdf",
+#      width = 8,
+#      height = 4)
+ggarrange(malefemaleXXY_noTBV, malefemaleXYY_noTBV, 
+          labels = c("A.", "B."),
+          ncol = 2)
+```

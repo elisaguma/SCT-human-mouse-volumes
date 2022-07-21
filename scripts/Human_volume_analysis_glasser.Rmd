@@ -1,0 +1,1298 @@
+---
+title: "human_volume_analysis"
+output: html_document
+---
+
+# Description
+
+In this script we perform the analysis to identify global and regional brain volume differences due to added X or Y chromosome (i.e. XXY vs XY controls, and XYY vs XY controls)
+
+# Load in necessary libraries
+```{r setup, echo=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(RMINC)
+library(magrittr)
+library(broom)
+
+library(ggplot2)
+library(ggseg)
+library(ggsegGlasser)
+library(raincloudplots)
+library(cowplot)
+library(readr)
+library(PupillometryR)
+library(colortools)
+```
+
+## Import data
+```{r}
+XXY_data_subcort_cort_filtered_unique<- readRDS("/Users/gumae2/Documents/Human_data/df_XXY_volumes_clean_unique_HCPglasser_aseg.RDS")
+XYY_data_subcort_cort_filtered_unique<- readRDS("/Users/gumae2/Documents/Human_data/df_XYY_volumes_clean_unique_HCPglasser_aseg.RDS")
+```
+
+## Check sample size
+```{r}
+table(XXY_data_subcort_cort_filtered_unique$DX_GROUP)
+table(XYY_data_subcort_cort_filtered_unique$dx_group)
+```
+
+## Calculate percent difference in volume for total tissue volume
+```{r}
+percent_difference_XXY <- XXY_data_subcort_cort_filtered_unique %>% 
+  group_by(DX_GROUP) %>% 
+  summarize(
+    mean_ttv = mean(BrainSegVolNotVent.x),
+    sd_ttv=sd(BrainSegVolNotVent.x),
+    n = n()
+  )
+XXY_data_subcort_cort_filtered_unique$pct_diff <- (XXY_data_subcort_cort_filtered_unique$BrainSegVolNotVent.x - 1274302)/1274302 *100
+mean(XXY_data_subcort_cort_filtered_unique$pct_diff)
+t.test(XXY_data_subcort_cort_filtered_unique$pct_diff)
+
+percent_difference_XYY <- XYY_data_subcort_cort_filtered_unique %>% 
+  group_by(dx_group) %>% 
+  summarize(
+    mean_ttv = mean(BrainSegVolNotVent.x),
+    n = n()
+  )
+
+XYY_data_subcort_cort_filtered_unique$pct_diff <- (XYY_data_subcort_cort_filtered_unique$BrainSegVolNotVent.x - 1261757)/1261757 *100
+mean(XYY_data_subcort_cort_filtered_unique$pct_diff)
+t.test(XYY_data_subcort_cort_filtered_unique$pct_diff)
+```
+ 
+# XXY analysis
+
+# HUMAN XXY Z-SCORE CALCULATION
+
+### define data
+```{r}
+ind <- XXY_data_subcort_cort_filtered_unique$DX_GROUP == 'NV' #First create an index getting the participants in the control group
+human_vols <- XXY_data_subcort_cort_filtered_unique[,11:ncol(XXY_data_subcort_cort_filtered_unique)] #Then subset the volumes for the control observations #vols from 54:461
+XXY_demo <- XXY_data_subcort_cort_filtered_unique[,1:10]
+vols_NV <- human_vols[ind,]
+```
+
+### calculate z-scores
+```{r}
+zscores_XXY <- matrix(0, nrow = nrow(human_vols), ncol = ncol(human_vols))
+for(j in 1:ncol(human_vols)){
+  mu <- mean(vols_NV[,j]) #Then you can compute the ROI-wise averages
+  sigma <- sd(vols_NV[,j]) #And standard deviations
+  zscores_XXY[,j] <- (human_vols[,j] - mu)/sigma #Then you can use those to make the z-score volumes
+}
+```
+
+### Assign column names and "rebind" demographics data
+```{r}
+colnames(zscores_XXY)<-colnames(human_vols)
+zscore_df_XXY <- XXY_demo %>% cbind(zscores_XXY) 
+```
+
+### Rename the grouops
+```{r}
+zscore_df_XXY$DX_GROUP <- recode_factor(zscore_df_XXY$DX_GROUP, NV = "XY_H", XXY="XXY_H")
+```
+
+
+# LINEAR MODEL Z-SCORE for XXY
+
+## Look at total brain, total tissue, and lateral ventricle effects
+
+### Total brain volume
+```{r}
+linearmodel <- lm(eTIV ~ DX_GROUP + AGE_cent, data=zscore_df_XXY)
+summary(linearmodel)
+```
+
+### Total tissue volume
+```{r}
+linearmodel <- lm(BrainSegVolNotVent.x ~ DX_GROUP + AGE_cent, data=zscore_df_XXY)
+summary(linearmodel)
+```
+
+### Plot total tissue volume
+```{r}
+## zscore total tissue volume
+mu_ttv_xxy<- mean(XXY_data_subcort_cort_filtered_unique$BrainSegVolNotVent.x)
+sigma_ttv_xxy <- sd(XXY_data_subcort_cort_filtered_unique$BrainSegVolNotVent.x)
+XXY_data_subcort_cort_filtered_unique$zscored_total_tissue_volume <- (XXY_data_subcort_cort_filtered_unique$BrainSegVolNotVent.x - mu_ttv_xxy)/sigma_ttv_xxy 
+
+
+pdf(file = "/Users/gumae2/Documents/Humouse_paper/Figures/XXY_H_TBV.pdf",   # The directory you want to save the file in
+    width = 6.5, # The width of the plot in inches
+    height = 4) # The height of the plot in inches
+
+ggplot(XXY_data_subcort_cort_filtered_unique, aes(x = DX_GROUP, y = zscored_total_tissue_volume, group=DX_GROUP, colour=DX_GROUP, fill=DX_GROUP)) + 
+geom_flat_violin(
+    position = position_nudge(x = .1, y = 0), 
+    alpha =.4,adjust =0.8)+
+  geom_boxplot(
+    width = .1, 
+    outlier.shape = NA,
+     alpha = .5
+  ) +
+  ## add justified jitter from the {gghalves} package
+  gghalves::geom_half_point(
+    ## draw jitter on the left
+    side = "l", 
+    ## control range of jitter
+    range_scale = .4, 
+    ## add some transparency
+    alpha = .3
+  ) +
+  #Adjust theme
+  scale_fill_manual(values=c("#BC6E52", "#52BCA3"))+ 
+  scale_color_manual(values = c("#BC6E52", "#52BCA3"))+
+  theme_classic()+
+  labs(
+    y="Total Tissue Volume (Z-scored)",
+    fill="DX_GROUP")+  theme(text = element_text(size = 14))+ylim(-4, 4)+
+  scale_y_continuous(
+    sec.axis = sec_axis(name=expression(Total ~ Tissue ~ Volume ~ Volume~ (mm^3)), ~ (. * sigma_ttv_xxy) + mu_ttv_xxy), 
+    name="Total Tissue Volume (Z-scored)", limits=c(-4,4)) +
+  coord_cartesian(xlim = c(1.2, NA), clip = "off")
+```
+
+
+### Lateral Ventricle
+```{r}
+#sum left and right lateral ventricle volume
+zscore_df_XXY$ventricle_volume <- zscore_df_XXY$Left.Lateral.Ventricle + zscore_df_XXY$Right.Lateral.Ventricle + zscore_df_XXY$Left.Inf.Lat.Vent + zscore_df_XXY$Right.Inf.Lat.Vent + zscore_df_XXY$X3rd.Ventricle + zscore_df_XXY$X4th.Ventricle + zscore_df_XXY$X5th.Ventricle
+
+zscore_df_XXY$lateral_ventricle_volume <- zscore_df_XXY$Left.Lateral.Ventricle + zscore_df_XXY$Right.Lateral.Ventricle + zscore_df_XXY$Left.Inf.Lat.Vent + zscore_df_XXY$Right.Inf.Lat.Vent 
+
+linearmodel <- lm(ventricle_volume ~ DX_GROUP + AGE_cent, data=zscore_df_XXY)
+linearmodel <- lm(lateral_ventricle_volume ~ DX_GROUP + AGE_cent, data=zscore_df_XXY)
+summary(linearmodel)
+```
+
+
+### Plot ventricle volume
+```{r}
+ggplot(zscore_df_XXY, aes(x = DX_GROUP, y = ventricle_volume, group=DX_GROUP, colour=DX_GROUP, fill=DX_GROUP)) + 
+ geom_flat_violin(
+    position = position_nudge(x = .1, y = 0), 
+    alpha =.4,adjust =0.8)+
+  geom_boxplot(
+    width = .12, 
+    outlier.shape = NA,
+     alpha = .4
+  ) +
+  ## add justified jitter from the {gghalves} package
+  gghalves::geom_half_point(
+    ## draw jitter on the left
+    side = "l", 
+    ## control range of jitter
+    range_scale = .4, 
+    ## add some transparency
+    alpha = .3
+  ) +
+  #Adjust theme
+  scale_fill_manual(values=c("#BC6E52", "#52BCA3"))+ 
+  scale_color_manual(values = c("#BC6E52", "#52BCA3"))+
+   theme_classic()+
+  labs(
+    y="Ventricle Volume (Z-scored)",
+    fill="DX_GROUP")+ 
+   theme(text = element_text(size = 14))+ylim(-4, 4)+
+  coord_cartesian(xlim = c(1.2, NA), clip = "off") 
+```
+
+## Run across all ROI XXY
+
+### Clean up z-scored DF
+```{r}
+zscore_df_XXY_clean <-dplyr::select(zscore_df_XXY, -"ventricle_volume", -"lateral_ventricle_volume", -"BrainSegVol",-"Optic.Chiasm", -ends_with("Ventricle"),
+                                    -ends_with("hCerebralWhiteMatterVol"), -ends_with("Cerebellum.White.Matter"), -"EstimatedTotalIntraCranialVol", 
+                                    -"CortexVol", -ends_with("VentralDC"),-"CerebralWhiteMatterVol",-"SubCortGrayVol", -"TotalGrayVol", -"eTIV", 
+                                    -starts_with("CC."), -ends_with("CortexVol"), -ends_with("..._volume"))
+```
+
+### With TBV covariate
+
+```{r}
+# Run the lienar model across all regions
+allROI_XXY_Lm_wTBV_zscore= anatLm(~ DX_GROUP + AGE_cent + BrainSegVolNotVent.x,zscore_df_XXY_clean,zscore_df_XXY_clean[,11:ncol(zscore_df_XXY_clean)])
+FDR_allROI_XXY_Lm_wTBV_zscore <- anatFDR(allROI_XXY_Lm_wTBV_zscore)
+FDR_allROI_XXY_Lm_wTBV_zscore
+
+#Calculate t values
+tvalsXXY <- abs(allROI_XXY_Lm_wTBV_zscore[, 'tvalue-DX_GROUPXXY_H'])
+dof <- 178
+pvalsDX_GROUPXXY_H <- 2*pt(q = tvalsXXY, df = dof, lower.tail = FALSE) %>% as_tibble()
+
+tvalsage <- abs(allROI_XXY_Lm_wTBV_zscore[, 'tvalue-AGE_cent'])
+dof <- 178
+pvalsAGE_cent <- 2*pt(q = tvalsage, df = dof, lower.tail = FALSE) %>% as_tibble()
+
+tvalsttv <- abs(allROI_XXY_Lm_wTBV_zscore[, 'tvalue-BrainSegVolNotVent.x'])
+dof <- 178
+pvalsBrainSegVolNotVent.x <- 2*pt(q = tvalsttv, df = dof, lower.tail = FALSE) %>% as_tibble()
+
+#Organize outputs of the linear model and store it as a csv
+model_outputs_XXY_wTBV <- allROI_XXY_Lm_wTBV_zscore %>% as.data.frame()
+model_outputs_XXY_wTBV$label <- rownames(allROI_XXY_Lm_wTBV_zscore) 
+model_outputs_XXY_wTBV1 <- cbind(model_outputs_XXY_wTBV, pvalsDX_GROUPXXY_H,pvalsAGE_cent,pvalsBrainSegVolNotVent.x,FDR_allROI_XXY_Lm_wTBV_zscore)
+colnames(model_outputs_XXY_wTBV1) <- c("F-statistic","R-squared","beta-(Intercept)","beta-DX_GROUPXXY_H", "beta-AGE_cent","beta-BrainSegVolNotVent.x", "tvalue-(Intercept)","tvalue-DX_GROUPXXY_H", "tvalue-AGE_cent", "tvalue-BrainSegVolNotVent.x","logLik","label","pvalsDX_GROUPXXY_H","pvalsAGE_cent","pvalsBrainSegVolNotVent.x", "qvalue-F-statistic", "qvalue-tvalue-(Intercept)", "qvalue-tvalue-DX_GROUPXXY_H", "qvalue-tvalue-AGE_cent", "qvalue-tvalue-BrainSegVolNotVent.x")
+
+write.csv(model_outputs_XXY_wTBV1, file="/Users/gumae2/Documents/Humouse_paper/Tables/XXY_H_Lm_wTBV_outputs.csv")
+```
+
+
+
+### Without TBV covariate
+```{r}
+#perform the iear model across all regions
+allROI_XXY_Lm_noTBV_zscore= anatLm(~ DX_GROUP + AGE_cent,zscore_df_XXY_clean,zscore_df_XXY_clean[,11:ncol(zscore_df_XXY_clean)])
+FDR_allROI_XXY_Lm_noTBV_zscore <- anatFDR(allROI_XXY_Lm_noTBV_zscore)
+FDR_allROI_XXY_Lm_noTBV_zscore
+
+#calculate t-values
+tvals <- abs(allROI_XXY_Lm_noTBV_zscore[, 'tvalue-DX_GROUPXXY_H'])
+dof <- 178
+pvalsDX_GROUPXXY_H <- 2*pt(q = tvals, df = dof, lower.tail = FALSE) %>% as_tibble()
+
+tvals <- abs(allROI_XXY_Lm_noTBV_zscore[, 'tvalue-AGE_cent'])
+dof <- 178
+pvalsAGE_cent <- 2*pt(q = tvals, df = dof, lower.tail = FALSE) %>% as_tibble()
+
+#Organize outputs of the linear model and store it as a csv
+model_outputs_XXY_noTBV <- allROI_XXY_Lm_noTBV_zscore %>% as.data.frame()
+model_outputs_XXY_noTBV$label <- rownames(allROI_XXY_Lm_noTBV_zscore) 
+model_outputs_XXY_noTBV1 <- cbind(model_outputs_XXY_noTBV,pvalsDX_GROUPXXY_H,pvalsAGE_cent,FDR_allROI_XXY_Lm_noTBV_zscore)
+colnames(model_outputs_XXY_noTBV1) <- c("F-statistic","R-squared","beta-(Intercept)","beta-DX_GROUPXXY_H", "beta-AGE_cent", "tvalue-(Intercept)","tvalue-DX_GROUPXXY_H", "tvalue-AGE_cent", "logLik","label","pvalsDX_GROUPXXY_H","pvalsAGE_cent", "qvalue-F-statistic", "qvalue-tvalue-(Intercept)", "qvalue-tvalue-DX_GROUPXXY_H", "qvalue-tvalue-AGE_cent")
+write.csv(model_outputs_XXY_noTBV1, file="/Users/gumae2/Documents/Humouse_paper/Tables/XXY_H_Lm_noTBV_outputs.csv")
+```
+
+
+## Plotting brain results
+
+### Turn lmer results into a df (with TBV correction) 
+Here we can threshold the t-values to those above 5%FDR correction (and use those for the Beta values as well). This is for the TBV corrected findings
+```{r}
+#rename regions so that the ggseg toosl can plot the correct regions
+model_outputs_XXY_wTBV$label <- gsub("_ROI_volume", "", model_outputs_XXY_wTBV$label)
+model_outputs_XXY_wTBV$label <- gsub("Right.", "Right-", model_outputs_XXY_wTBV$label)
+model_outputs_XXY_wTBV$label <- gsub("Left.", "Left-", model_outputs_XXY_wTBV$label)
+model_outputs_XXY_wTBV$label <- gsub("Cerebellum.Cortex", "cerebellum-cortex", model_outputs_XXY_wTBV$label)
+#model_outputs_XXY_wTBV$label <- gsub("Right-cerebellum-cortex", "right-cerebellum-white-matter",  model_outputs_XXY_wTBV$label)
+model_outputs_XXY_wTBV$label <- gsub("Brain.Stem", "brain-stem", model_outputs_XXY_wTBV$label)
+model_outputs_XXY_wTBV$label <- gsub("Thalamus", "Thalamus-Proper", model_outputs_XXY_wTBV$label)
+
+## Threshold at 5% FDR
+sig_tvalues_pos_XXY_wTBV <- model_outputs_XXY_wTBV$`tvalue-DX_GROUPXXY_H`> 2.53
+significant_positive_tvalues_XXY_wTBV <-model_outputs_XXY_wTBV[sig_tvalues_pos_XXY_wTBV,]
+sig_tvalues_neg_XXY_wTBV <- model_outputs_XXY_wTBV$`tvalue-DX_GROUPXXY_H`< -2.53
+significant_negative_tvalues_XXY_wTBV <-model_outputs_XXY_wTBV[sig_tvalues_neg_XXY_wTBV,]
+sig_tvalues_XXY_wTBV <- model_outputs_XXY_wTBV[sig_tvalues_pos_XXY_wTBV | sig_tvalues_neg_XXY_wTBV, ]
+```
+
+### Atlas images
+```{r}
+## Just atlas
+# pdf(file = "/Users/gumae2/Documents/Humouse_paper/Figures/Glasser_atlas.pdf",   # The directory you want to save the file in
+#      width = 3, # The width of the plot in inches
+#      height = 6) # The height of the plot in inches
+
+ggplot() +  
+  geom_brain(atlas = glasser, 
+              position = position_brain(hemi +side ~ .),colour="white",
+             show.legend=F) + 
+  theme_void() +
+  labs(title = "Glasser atlas") 
+#dev.off()
+
+#atlas legend
+# pdf(file = "/Users/gumae2/Documents/Humouse_paper/Figures/Glasser_legend.pdf",   # The directory you want to save the file in
+#      width = 5, # The width of the plot in inches
+#      height = 6) # The height of the plot in inches
+
+ggplot() +  
+  geom_brain(atlas = glasser, 
+              position = position_brain(hemi +side ~ .)) + 
+  theme_void() +
+  theme(legend.position = "bottom",
+        legend.text = element_text(size = 10))
+labs(title = "Glasser atlas")
+#dev.off()
+```
+
+### Unthresholded cortical map
+```{r}
+#glasser<-brain_join(model_outputs_XXY_wTBV, glasser, by = "label")
+pdf(file = "/Users/gumae2/Documents/Humouse_paper/Figures/Glasser_XXY_unthresholded_wTBV.pdf",   
+     width = 3,
+     height = 6) 
+
+ggplot(model_outputs_XXY_wTBV) +   
+  geom_brain(atlas = glasser, 
+             colour="white", position = position_brain(hemi +side ~ .),
+             mapping=aes(fill=`beta-DX_GROUPXXY_H`)) + 
+  theme_void() +
+  theme(legend.text = element_text(size = 10))+
+    labs(title = "XXY vs XY (with TBV correction)", fill="Beta") +
+   scale_fill_gradient2(low = c("navyblue","blue","royalblue","dodgerblue1","deepskyblue1","turquoise3"),
+                        mid = NULL,
+                        high = c("goldenrod1","orange1","firebrick2", "firebrick3","firebrick","red4"),
+                        midpoint = 0,na.value="grey",limits = c(-1.5,1.5), 
+                        n.breaks=5)
+```
+### Subcortical atlas
+```{r}
+# just atlas
+# pdf(file = "/Users/gumae2/Documents/Humouse_paper/Figures/Aseg_atlas.pdf",   
+#      width = 2,
+#      height = 2) 
+
+ggplot() +   
+  geom_brain(atlas = aseg, 
+             side="axial",
+             show.legend=F) + labs(title = "Freesurfer Aseg atlas")+
+  theme_void()+theme(legend.position = "right",
+        legend.text = element_text(size = 10))
+#dev.off()
+
+#legend
+# pdf(file = "/Users/gumae2/Documents/Humouse_paper/Figures/Aseg_atlas_sagittal_wlegend.pdf",
+#      width = 6,
+#      height = 4)
+
+ggplot() +   
+  geom_brain(atlas = aseg, 
+             side="sagittal",
+             show.legend=T) +
+  theme_void() +  
+  theme(legend.position = "right",
+        legend.text = element_text(size = 10))
+#dev.off()
+```
+
+### Unthresholded subcortical results
+```{r}
+# aseg_test<-brain_join(model_outputs_XXY_wTBV, aseg, by = "label")
+pdf(file = "/Users/gumae2/Documents/Humouse_paper/Figures/Aseg_XXY_axial_unthresholded_wTBV.pdf",
+     width = 5,
+     height = 4)
+#axial
+ggplot(model_outputs_XXY_wTBV) +   
+  geom_brain(atlas = aseg, 
+             side="axial",
+             mapping=aes(fill=`beta-DX_GROUPXXY_H`), 
+             show.legend=T) +
+  theme_void() +  
+  theme(legend.text = element_text(size = 10))+
+    labs(title = "XXY vs XY (with TBV correction)", fill="Beta")+
+ scale_fill_gradient2(low = c("navyblue","blue","royalblue","dodgerblue1","deepskyblue1","turquoise3"),
+                        mid = NULL,
+                        high = c("goldenrod1","orange1","firebrick2", "firebrick3","firebrick","red4"),
+                        midpoint = 0,na.value="grey",limits = c(-1.5,1.5), 
+                        n.breaks=5)
+### Sagittal
+pdf(file = "/Users/gumae2/Documents/Humouse_paper/Figures/Aseg_XXY_sagittal_unthresholded_wTBV.pdf",
+     width = 5,
+     height = 4)
+ggplot(model_outputs_XXY_wTBV) +   
+  geom_brain(atlas = aseg, 
+             side="sagittal",
+             mapping=aes(fill=`beta-DX_GROUPXXY_H`), 
+             show.legend=T) +
+  theme_void()  +
+  theme(legend.text = element_text(size = 10))+
+    labs(title = "XXY vs XY (with TBV correction)", fill="Beta")+
+  scale_fill_gradient2(low = c("navyblue","blue","royalblue","dodgerblue1","deepskyblue1","turquoise3"),
+                        mid = NULL,
+                        high = c("goldenrod1","orange1","firebrick2", "firebrick3","firebrick","red4"),
+                        midpoint = 0,na.value="grey",limits = c(-1.5,1.5), 
+                        n.breaks=5)
+```
+
+
+### Plot significant cortical effects with TBV correction
+```{r}
+pdf(file = "/Users/gumae2/Documents/Humouse_paper/Figures/Glasser_XXY_significant_wTBV.pdf",
+     width = 3,
+     height = 6)
+
+ggplot(sig_tvalues_XXY_wTBV) +   
+  geom_brain(atlas = glasser, 
+             colour="white", position = position_brain(hemi +side ~ .),
+             mapping=aes(fill=`beta-DX_GROUPXXY_H`)) + theme_void() +
+  theme(legend.text = element_text(size = 10))+
+    labs(title = "XXY vs XY (with TBV correction)", fill="Beta")+
+ scale_fill_gradient2(low = c("navyblue","blue","royalblue","dodgerblue1","deepskyblue1","turquoise3"),
+                        mid = NULL,
+                        high = c("goldenrod1","orange1","firebrick2", "firebrick3","firebrick","red4"),
+                        midpoint = 0,na.value="grey",limits = c(-1.5,1.5), 
+                        n.breaks=5)
+```
+
+### Significant subcortical results with TBV correction
+Subcortical values (only negative tstats are positive)
+```{r}
+#aseg <- aseg %>% as.tibble() %>% left_join(sig_tvalues_XXY_wTBV)
+#beta
+pdf(file = "/Users/gumae2/Documents/Humouse_paper/Figures/Aseg_XXY_axial_significant.pdf",
+     width = 5,
+     height = 4)
+
+ggplot(sig_tvalues_XXY_wTBV) +   
+  geom_brain(atlas = aseg, side="axial",
+             mapping=aes(fill=`beta-DX_GROUPXXY_H`), show.legend=T) +
+  theme_void() +  
+  theme(legend.text = element_text(size = 10))+
+    labs(title = "XXY vs XY (with TBV correction)", fill="Beta")+
+ scale_fill_gradient2(low = c("navyblue","blue","royalblue","dodgerblue1","deepskyblue1","turquoise3"),
+                        mid = NULL,
+                        high = c("goldenrod1","orange1","firebrick2", "firebrick3","firebrick","red4"),
+                        midpoint = 0,na.value="grey",limits = c(-1.5,1.5), 
+                        n.breaks=5)
+
+
+pdf(file = "/Users/gumae2/Documents/Humouse_paper/Figures/Aseg_XXY_sagittal_significant_wTBV.pdf",
+     width = 5,
+     height = 4)
+ggplot(sig_tvalues_XXY_wTBV) +   
+  geom_brain(atlas = aseg, side="sagittal",
+             mapping=aes(fill=`beta-DX_GROUPXXY_H`), show.legend=T) +
+  theme_void() +  
+  theme(legend.text = element_text(size = 10))+
+    labs(title = "XXY vs XY (with TBV correction)", fill="Beta")+
+ scale_fill_gradient2(low = c("navyblue","blue","royalblue","dodgerblue1","deepskyblue1","turquoise3"),
+                        mid = NULL,
+                        high = c("goldenrod1","orange1","firebrick2", "firebrick3","firebrick","red4"),
+                        midpoint = 0,na.value="grey",limits = c(-1.5,1.5), 
+                        n.breaks=5)
+```
+
+
+
+### Turn lmer results into a df (no TBV correction) 
+Here we can threshold the t-values to those above 5%FDR correction (and use those for the Beta values as well). This is for the TBV corrected findings
+```{r}
+model_outputs_XXY_noTBV$label <- gsub("_ROI_volume", "", model_outputs_XXY_noTBV$label)
+model_outputs_XXY_noTBV$label <- gsub("Right.", "Right-", model_outputs_XXY_noTBV$label)
+model_outputs_XXY_noTBV$label <- gsub("Left.", "Left-", model_outputs_XXY_noTBV$label)
+model_outputs_XXY_noTBV$label <- gsub("Cerebellum.Cortex", "cerebellum-cortex", model_outputs_XXY_noTBV$label)
+#model_outputs_XXY_noTBV$label <- gsub("Right-cerebellum-cortex", "right-cerebellum-white-matter",  model_outputs_XXY_noTBV$label)
+model_outputs_XXY_noTBV$label <- gsub("Brain.Stem", "brain-stem", model_outputs_XXY_noTBV$label)
+model_outputs_XXY_noTBV$label <- gsub("Thalamus", "Thalamus-Proper", model_outputs_XXY_noTBV$label)
+
+## Threshold at 5% FDR
+sig_tvalues_pos_XXY_noTBV <- model_outputs_XXY_noTBV$`tvalue-DX_GROUPXXY_H`> 2.15
+significant_positive_tvalues_XXY_noTBV <-model_outputs_XXY_noTBV[sig_tvalues_pos_XXY_noTBV,]
+sig_tvalues_neg_XXY_noTBV <- model_outputs_XXY_noTBV$`tvalue-DX_GROUPXXY_H`< -2.15
+significant_negative_tvalues_XXY_noTBV <-model_outputs_XXY_noTBV[sig_tvalues_neg_XXY_noTBV,]
+sig_tvalues_XXY_noTBV <- model_outputs_XXY_noTBV[sig_tvalues_pos_XXY_noTBV | sig_tvalues_neg_XXY_noTBV, ]
+```
+
+
+### Unthresholded cortical results without TBV correction
+```{r}
+#cortical
+pdf(file = "/Users/gumae2/Documents/Humouse_paper/Figures/Glasser_XXY_unthresholded_noTBV.pdf",
+     width = 3.5,
+     height = 6)
+ggplot(model_outputs_XXY_noTBV) +   
+  geom_brain(atlas = glasser, 
+             colour="white", position = position_brain(hemi +side ~ .),
+             mapping=aes(fill=`beta-DX_GROUPXXY_H`)) + theme_void() +
+ theme(legend.text = element_text(size = 10))+
+    labs(title = "XXY vs XY (without TBV correction)", fill="Beta")+
+  scale_fill_gradient2(low = c("navyblue","blue","royalblue","dodgerblue1","deepskyblue1","turquoise3"),
+                        mid = NULL,
+                        high = c("goldenrod1","orange1","firebrick2", "firebrick3","firebrick","red4"),
+                        midpoint = 0,na.value="grey",limits = c(-1.5,1.5), 
+                        n.breaks=5)
+```
+
+### Unthresholded subcortical results without TBV correction
+```{r}
+pdf(file = "/Users/gumae2/Documents/Humouse_paper/Figures/Aseg_XXY_axial_unthresholded_noTBV.pdf",
+     width = 5,
+     height = 4)
+
+##Axial
+ggplot(model_outputs_XXY_noTBV) +   
+  geom_brain(atlas = aseg, side="axial",
+             mapping=aes(fill=`beta-DX_GROUPXXY_H`), show.legend=T) +
+ theme_void() +  
+  theme(legend.text = element_text(size = 10))+
+    labs(title = "XXY vs XY (without TBV correction)", fill="Beta")+
+  scale_fill_gradient2(low = c("navyblue","blue","royalblue","dodgerblue1","deepskyblue1","turquoise3"),
+                        mid = NULL,
+                        high = c("goldenrod1","orange1","firebrick2", "firebrick3","firebrick","red4"),
+                        midpoint = 0,na.value="grey",limits = c(-1.5,1.5), 
+                        n.breaks=5)
+
+##Sagittal
+pdf(file = "/Users/gumae2/Documents/Humouse_paper/Figures/Aseg_XXY_sagittal_unthresholded_noTBV.pdf",
+     width = 5,
+     height = 4)
+ggplot(model_outputs_XXY_noTBV) +   
+  geom_brain(atlas = aseg, side="sagittal",
+             mapping=aes(fill=`beta-DX_GROUPXXY_H`), show.legend=T) +
+ theme_void() +  
+  theme(legend.text = element_text(size = 10))+
+    labs(title = "XXY vs XY (without TBV correction)", fill="Beta")+
+  scale_fill_gradient2(low = c("navyblue","blue","royalblue","dodgerblue1","deepskyblue1","turquoise3"),
+                        mid = NULL,
+                        high = c("goldenrod1","orange1","firebrick2", "firebrick3","firebrick","red4"),
+                        midpoint = 0,na.value="grey",limits = c(-1.5,1.5), 
+                        n.breaks=5)
+```
+
+### Plot cortical significant effects without TBV correction
+```{r}
+pdf(file = "/Users/gumae2/Documents/Humouse_paper/Figures/Glasser_XXY_significant_noTBV.pdf",
+     width = 3.5,
+     height = 6)
+ggplot(sig_tvalues_XXY_noTBV) +   
+  geom_brain(atlas = glasser, 
+             colour="white", position = position_brain(hemi +side ~ .),
+             mapping=aes(fill=`beta-DX_GROUPXXY_H`)) + 
+  theme_void() +  
+  theme(legend.text = element_text(size = 10))+
+    labs(title = "XXY vs XY (without TBV correction)", fill="Beta")+
+scale_fill_gradient2(low = c("navyblue","blue","royalblue","dodgerblue1","deepskyblue1","turquoise3"),
+                        mid = NULL,
+                        high = c("goldenrod1","orange1","firebrick2", "firebrick3","firebrick","red4"),
+                        midpoint = 0,na.value="grey",limits = c(-1.5,1.5), 
+                        n.breaks=5)
+```
+
+
+### Subcortical results without TBV correction
+Subcortitcal values (only negative -tstats are positive)
+```{r}
+#aseg <- aseg %>% as.tibble() %>% left_join(sig_tvalues_XXY_noTBV)
+#beta
+pdf(file = "/Users/gumae2/Documents/Humouse_paper/Figures/Aseg_XXY_axial_significant_noTBV.pdf",
+     width = 5,
+     height = 4)
+ggplot(sig_tvalues_XXY_noTBV) +   
+  geom_brain(atlas = aseg, side="axial",
+             mapping=aes(fill=`beta-DX_GROUPXXY_H`), show.legend=T) +
+  theme_void() +  
+  theme(legend.text = element_text(size = 10))+
+    labs(title = "XXY vs XY (without TBV correction)", fill="Beta")+
+  scale_fill_gradient2(low = c("navyblue","blue","royalblue","dodgerblue1","deepskyblue1","turquoise3"),
+                        mid = NULL,
+                        high = c("goldenrod1","orange1","firebrick2", "firebrick3","firebrick","red4"),
+                        midpoint = 0,na.value="grey",limits = c(-1.5,1.5), 
+                        n.breaks=5)
+
+
+pdf(file = "/Users/gumae2/Documents/Humouse_paper/Figures/Aseg_XXY_sagittal_significant_noTBV.pdf",
+     width = 5,
+     height = 4)
+ggplot(sig_tvalues_XXY_noTBV) +   
+  geom_brain(atlas = aseg, side="sagittal",
+               mapping=aes(fill=`beta-DX_GROUPXXY_H`), show.legend=T) +
+  theme_void() +  
+  theme(legend.text = element_text(size = 10))+
+    labs(title = "XXY vs XY (without TBV correction)", fill="Beta")+
+ scale_fill_gradient2(low = c("navyblue","blue","royalblue","dodgerblue1","deepskyblue1","turquoise3"),
+                        mid = NULL,
+                        high = c("goldenrod1","orange1","firebrick2", "firebrick3","firebrick","red4"),
+                        midpoint = 0,na.value="grey",limits = c(-1.5,1.5), 
+                        n.breaks=5)
+```
+
+
+# Look at the effects for XYY
+Here we repeat the above analysis in the XYY group
+# HUMAN XYY Z-SCORE CALCULATION
+### Define data
+```{r}
+ind <- XYY_data_subcort_cort_filtered_unique$dx_group == 'HV' #First create an index getting the participants in the control group
+human_vols_XYY <- XYY_data_subcort_cort_filtered_unique[,11:ncol(XYY_data_subcort_cort_filtered_unique)] #Then subset the volumes for the control observations; volumes 60:466
+XYY_demo <- XYY_data_subcort_cort_filtered_unique[,1:10]
+vols_HV <- human_vols_XYY[ind,]
+```
+
+### Calculate z-scores
+```{r}
+zscores_XYY <- matrix(0, nrow = nrow(human_vols_XYY), ncol = ncol(human_vols_XYY))
+for(j in 1:ncol(human_vols_XYY)){
+  mu <- mean(vols_HV[,j]) #Then you can compute the ROI-wise averages
+  sigma <- sd(vols_HV[,j]) #And standard deviations
+  zscores_XYY[,j] <- (human_vols_XYY[,j] - mu)/sigma #Then you can use those to make the z-score volumes
+}
+```
+
+### Assign column names and "rebind" demographics data
+```{r}
+colnames(zscores_XYY)<-colnames(human_vols_XYY)
+zscore_df_XYY <- XYY_demo %>% cbind(zscores_XYY) 
+```
+
+### Rename groups
+```{r}
+zscore_df_XYY$dx_group <- recode_factor(zscore_df_XYY$dx_group, HV = "XY_H", XYY="XYY_H")
+```
+
+# LINEAR MODEL Z-SCORE for XYY
+
+## Look at total brain, total tissue, and lateral ventricle effects
+### Total brain volume
+```{r}
+linearmodel <- lm(eTIV ~ dx_group + AGE_cent, data=zscore_df_XYY)
+summary(linearmodel)
+```
+
+### Total tissue volume
+```{r}
+linearmodel <- lm(BrainSegVolNotVent.x ~ dx_group + AGE_cent, data=zscore_df_XYY)
+summary(linearmodel)
+```
+
+### Plot total tissue volume
+```{r}
+## zscore total tissue volume
+mu_ttv_xyy<- mean(XYY_data_subcort_cort_filtered_unique$BrainSegVolNotVent.x)
+sigma_ttv_xyy <- sd(XYY_data_subcort_cort_filtered_unique$BrainSegVolNotVent.x)
+XYY_data_subcort_cort_filtered_unique$zscored_total_tissue_volume <- (XYY_data_subcort_cort_filtered_unique$BrainSegVolNotVent.x - mu_ttv_xyy)/sigma_ttv_xyy 
+
+pdf(file = "/Users/gumae2/Documents/Humouse_paper/Figures/XYY_H_TBV.pdf",   # The directory you want to save the file in
+    width = 6.2, # The width of the plot in inches
+    height = 4) # The height of the plot in inches
+
+ggplot(XYY_data_subcort_cort_filtered_unique, aes(x = dx_group, y = zscored_total_tissue_volume, group=dx_group, colour=dx_group, fill=dx_group)) +
+  geom_flat_violin(
+    position = position_nudge(x = .1, y = 0), 
+    alpha =.4,adjust =0.8)+
+  geom_boxplot(
+    width = .12, 
+    outlier.shape = NA,
+     alpha = .4
+  ) +
+  ## add justified jitter from the {gghalves} package
+  gghalves::geom_half_point(
+    ## draw jitter on the left
+    side = "l", 
+    ## control range of jitter
+    range_scale = .4, 
+    ## add some transparency
+    alpha = .4
+  ) +
+  #Adjust theme
+  scale_fill_manual(values=c("#BC6E52", "#6e52bc"))+#"#52BCA3"
+  scale_color_manual(values = c("#BC6E52", "#6e52bc"))+
+   theme_classic()+
+   labs(
+    y="Total Tissue Volume (Z-scored)",
+    fill="dx_group")+  theme(text = element_text(size = 14))+ylim(-4, 4)+
+  scale_y_continuous(
+    sec.axis = sec_axis(name=expression(Total ~ Tissue ~ Volume ~ Volume~ (mm^3)), ~ (. * sigma_ttv_xyy) + mu_ttv_xyy), 
+    name="Total Tissue Volume (Z-scored)", limits=c(-4,4)) +
+  coord_cartesian(xlim = c(1.2, NA), clip = "off")
+```
+
+
+### Lateral Ventricle
+```{r}
+#sum left and right lateral ventricle volume
+zscore_df_XYY$ventricle_volume <- zscore_df_XYY$Left.Lateral.Ventricle + zscore_df_XYY$Right.Lateral.Ventricle + zscore_df_XYY$Left.Inf.Lat.Vent + zscore_df_XYY$Right.Inf.Lat.Vent + zscore_df_XYY$X3rd.Ventricle + zscore_df_XYY$X4th.Ventricle + zscore_df_XYY$X5th.Ventricle
+
+zscore_df_XYY$lateral_ventricle_volume <- zscore_df_XYY$Left.Lateral.Ventricle + zscore_df_XYY$Right.Lateral.Ventricle + zscore_df_XYY$Left.Inf.Lat.Vent + zscore_df_XYY$Right.Inf.Lat.Vent 
+
+linearmodel <- lm(ventricle_volume ~ dx_group + AGE_cent, data=zscore_df_XYY)
+linearmodel <- lm(lateral_ventricle_volume ~ dx_group + AGE_cent, data=zscore_df_XYY)
+summary(linearmodel)
+```
+
+### Plot ventricular volume
+```{r}
+ggplot(zscore_df_XYY, aes(x = dx_group, y = ventricle_volume, group=dx_group, colour=dx_group, fill=dx_group)) +
+ geom_flat_violin(
+    position = position_nudge(x = .1, y = 0), 
+    alpha =.4,adjust =0.8)+
+  geom_boxplot(
+    width = .12, 
+    outlier.shape = NA,
+     alpha = .4
+  ) +
+  ## add justified jitter from the {gghalves} package
+  gghalves::geom_half_point(
+    ## draw jitter on the left
+    side = "l", 
+    ## control range of jitter
+    range_scale = .4, 
+    ## add some transparency
+    alpha = .3
+  ) +
+  #Adjust theme
+  scale_fill_manual(values=c("#BC6E52", "#6e52bc"))+
+  scale_color_manual(values = c("#BC6E52", "#6e52bc"))+
+  theme_classic()+
+  labs(
+    y="Ventricle Volume (Z-scored)",
+    fill="dx_group")+ 
+   theme(text = element_text(size = 14))+ylim(-4, 4)+
+  coord_cartesian(xlim = c(1.2, NA), clip = "off") 
+```
+
+
+## Run across all ROI XYY
+
+### Clean up z-scored DF
+```{r}
+zscore_df_XYY_clean <-dplyr::select(zscore_df_XYY, -"ventricle_volume", -"lateral_ventricle_volume", -"BrainSegVol",-"Optic.Chiasm", 
+                                    -ends_with("hCerebralWhiteMatterVol"), -"EstimatedTotalIntraCranialVol", -"CortexVol", -ends_with("VentralDC"),
+                                    -"CerebralWhiteMatterVol",-"SubCortGrayVol", -"TotalGrayVol", -"eTIV", -starts_with("CC_"), -ends_with("CortexVol"),
+                                    -ends_with("..._volume"), -ends_with(".White.Matter"), -ends_with("Vent"), -ends_with("Ventricle"))
+```
+
+### With TBV covariate
+
+```{r}
+# run liner model across all ROIs
+allROI_XYY_Lm_wTBV_zscore= anatLm(~ dx_group + AGE_cent + BrainSegVolNotVent.x,zscore_df_XYY_clean,zscore_df_XYY_clean[,11:ncol(zscore_df_XYY_clean)])
+FDR_allROI_XYY_Lm_wTBV_zscore <- anatFDR(allROI_XYY_Lm_wTBV_zscore)
+FDR_allROI_XYY_Lm_wTBV_zscore
+
+# calculate t-values
+tvals <- abs(allROI_XYY_Lm_wTBV_zscore[, 'tvalue-dx_groupXYY_H'])
+dof <- 71
+pvalsdx_groupXYY_H <- 2*pt(q = tvals, df = dof, lower.tail = FALSE) %>% as_tibble()
+
+tvals <- abs(allROI_XYY_Lm_wTBV_zscore[, 'tvalue-AGE_cent'])
+dof <- 71
+pvalsAGE_cent <- 2*pt(q = tvals, df = dof, lower.tail = FALSE) %>% as_tibble()
+
+tvals <- abs(allROI_XYY_Lm_wTBV_zscore[, 'tvalue-BrainSegVolNotVent.x'])
+dof <- 71
+pvalsBrainSegVolNotVent.x <- 2*pt(q = tvals, df = dof, lower.tail = FALSE) %>% as_tibble()
+
+# aggregate model outputs 
+model_outputs_XYY_wTBV <- allROI_XYY_Lm_wTBV_zscore %>% as.data.frame()
+model_outputs_XYY_wTBV$label <- rownames(allROI_XYY_Lm_wTBV_zscore) 
+model_outputs_XYY_wTBV1 <- cbind(model_outputs_XYY_wTBV, pvalsdx_groupXYY_H,pvalsAGE_cent,pvalsBrainSegVolNotVent.x,FDR_allROI_XYY_Lm_wTBV_zscore)
+colnames(model_outputs_XYY_wTBV1) <- c("F-statistic","R-squared","beta-(Intercept)","beta-dx_groupXYY_H", "beta-AGE_cent","beta-BrainSegVolNotVent.x", "tvalue-(Intercept)","tvalue-dx_groupXYY_H", "tvalue-AGE_cent", "tvalue-BrainSegVolNotVent.x","logLik","label","pvalsdx_groupXYY_H","pvalsAGE_cent","pvalsBrainSegVolNotVent.x", "qvalue-F-statistic", "qvalue-tvalue-(Intercept)", "qvalue-tvalue-dx_groupXYY_H", "qvalue-tvalue-AGE_cent",             "qvalue-tvalue-BrainSegVolNotVent.x")
+
+write.csv(model_outputs_XYY_wTBV1, file="/Users/gumae2/Documents/Humouse_paper/Tables/XYY_H_Lm_wTBV_outputs.csv")
+
+model_outputs_both_groups <- merge(model_outputs_XXY_wTBV1, model_outputs_XYY_wTBV1, by="label")
+write.csv(model_outputs_both_groups, file="/Users/gumae2/Documents/Humouse_paper/Tables/H_Lm_wTBV_outputs.csv")
+```
+
+### Without TBV covariate
+```{r}
+# run liner model across all ROIs
+allROI_XYY_Lm_noTBV_zscore= anatLm(~ dx_group + AGE_cent,zscore_df_XYY_clean,zscore_df_XYY_clean[,11:ncol(zscore_df_XYY_clean)])
+FDR_allROI_XYY_Lm_noTBV_zscore <- anatFDR(allROI_XYY_Lm_noTBV_zscore)
+FDR_allROI_XYY_Lm_noTBV_zscore
+
+# calculate t-values
+tvals <- abs(allROI_XYY_Lm_noTBV_zscore[, 'tvalue-dx_groupXYY_H'])
+dof <- 71
+pvalsdx_groupXYY_H <- 2*pt(q = tvals, df = dof, lower.tail = FALSE) %>% as_tibble()
+
+tvals <- abs(allROI_XYY_Lm_noTBV_zscore[, 'tvalue-AGE_cent'])
+dof <- 71
+pvalsAGE_cent <- 2*pt(q = tvals, df = dof, lower.tail = FALSE) %>% as_tibble()
+
+# aggregate model outputs 
+model_outputs_XYY_noTBV <- allROI_XYY_Lm_noTBV_zscore %>% as.data.frame()
+model_outputs_XYY_noTBV$label <- rownames(allROI_XYY_Lm_noTBV_zscore) 
+model_outputs_XYY_noTBV1 <- cbind(model_outputs_XYY_noTBV, pvalsdx_groupXYY_H,pvalsAGE_cent,FDR_allROI_XYY_Lm_noTBV_zscore)
+colnames(model_outputs_XYY_noTBV1) <- c("F-statistic","R-squared","beta-(Intercept)","beta-dx_groupXYY_H", "beta-AGE_cent", "tvalue-(Intercept)","tvalue-dx_groupXYY_H", "tvalue-AGE_cent", "logLik","label","pvalsdx_groupXYY_H","pvalsAGE_cent", "qvalue-F-statistic", "qvalue-tvalue-(Intercept)", "qvalue-tvalue-dx_groupXYY_H", "qvalue-tvalue-AGE_cent")
+
+write.csv(model_outputs_XYY_noTBV1, file="/Users/gumae2/Documents/Humouse_paper/Tables/XYY_H_Lm_noTBV_outputs.csv")
+
+model_outputs_both_groups <- merge(model_outputs_XXY_noTBV1, model_outputs_XYY_noTBV1, by="label")
+write.csv(model_outputs_both_groups, file="/Users/gumae2/Documents/Humouse_paper/Tables/H_Lm_noTBV_outputs.csv")
+```
+
+#Plotting brain results
+
+### Turn lmer results into a df (with TBV correction) 
+Here we can threshold the t-values to those above 5%FDR correction (and use those for the Beta values as well). This is for the TBV corrected findings
+```{r}
+model_outputs_XYY_wTBV$label <- gsub("_ROI_volume", "", model_outputs_XYY_wTBV$label)
+model_outputs_XYY_wTBV$label <- gsub("Right.", "Right-", model_outputs_XYY_wTBV$label)
+model_outputs_XYY_wTBV$label <- gsub("Left.", "Left-", model_outputs_XYY_wTBV$label)
+#model_outputs_XYY_wTBV$label <- gsub("Right-Cerebellum.Cortex", "right-cerebellum-white-matter",  model_outputs_XYY_wTBV$label)
+model_outputs_XYY_wTBV$label <- gsub("Cerebellum.Cortex", "cerebellum-cortex", model_outputs_XYY_wTBV$label)
+model_outputs_XYY_wTBV$label <- gsub("Brain.Stem", "brain-stem", model_outputs_XYY_wTBV$label)
+model_outputs_XYY_wTBV$label <- gsub("Thalamus", "Thalamus-Proper", model_outputs_XYY_wTBV$label)
+
+## Threshold at 5% FDR
+sig_tvalues_pos_XYY_wTBV <- model_outputs_XYY_wTBV$`tvalue-dx_groupXYY_H`> 2.68
+significant_positive_tvalues_XYY_wTBV <-model_outputs_XYY_wTBV[sig_tvalues_pos_XYY_wTBV,]
+sig_tvalues_neg_XYY_wTBV <- model_outputs_XYY_wTBV$`tvalue-dx_groupXYY_H`< -2.68
+significant_negative_tvalues_XYY_wTBV <-model_outputs_XYY_wTBV[sig_tvalues_neg_XYY_wTBV,]
+sig_tvalues_XYY_wTBV <- model_outputs_XYY_wTBV[sig_tvalues_pos_XYY_wTBV | sig_tvalues_neg_XYY_wTBV, ]
+```
+
+### Unthresholded cortical results XYY with TBV
+```{r}
+pdf(file = "/Users/gumae2/Documents/Humouse_paper/Figures/Glasser_XYY_unthresholded_wTBV.pdf",
+     width = 3,
+     height = 6)
+ggplot(model_outputs_XYY_wTBV) +   
+  geom_brain(atlas = glasser, 
+             colour="white", position = position_brain(hemi +side ~ .),
+             mapping=aes(fill=`beta-dx_groupXYY_H`)) + theme_void() +
+  theme(legend.text = element_text(size = 10))+
+    labs(title = "XYY vs XY (with TBV correction)", fill="Beta")+
+ scale_fill_gradient2(low = c("navyblue","blue","royalblue","dodgerblue1","deepskyblue1","turquoise3"),
+                        mid = NULL,
+                        high = c("goldenrod1","orange1","firebrick2", "firebrick3","firebrick","red4"),
+                        midpoint = 0,na.value="grey",limits = c(-1.5,1.5), 
+                        n.breaks=5)
+```
+### Subcortical unthresolded effects with TBV
+```{r}
+#subcortical
+pdf(file = "/Users/gumae2/Documents/Humouse_paper/Figures/Aseg_XYY_axial_unthresholded_wTBV.pdf",
+     width = 5,
+     height = 4)
+ggplot(model_outputs_XYY_wTBV) +   
+  geom_brain(atlas = aseg, side="axial",
+             mapping=aes(fill=`beta-dx_groupXYY_H`), show.legend=T) +
+  theme_void() + 
+  theme(legend.text = element_text(size = 10))+
+    labs(title = "XYY vs XY (with TBV correction)", fill="Beta")+
+ scale_fill_gradient2(low = c("navyblue","blue","royalblue","dodgerblue1","deepskyblue1","turquoise3"),
+                        mid = NULL,
+                        high = c("goldenrod1","orange1","firebrick2", "firebrick3","firebrick","red4"),
+                        midpoint = 0,na.value="grey",limits = c(-1.5,1.5), 
+                        n.breaks=5)
+
+pdf(file = "/Users/gumae2/Documents/Humouse_paper/Figures/Aseg_XYY_sagittal_unthresholded_wTBV.pdf",
+     width = 5,
+     height = 4)
+
+ggplot(model_outputs_XYY_wTBV) +   
+  geom_brain(atlas = aseg, side="sagittal",
+             mapping=aes(fill=`beta-dx_groupXYY_H`), show.legend=T) +
+  theme_void() + 
+  theme(legend.text = element_text(size = 10))+
+    labs(title = "XYY vs XY (with TBV correction)", fill="Beta")+
+ scale_fill_gradient2(low = c("navyblue","blue","royalblue","dodgerblue1","deepskyblue1","turquoise3"),
+                        mid = NULL,
+                        high = c("goldenrod1","orange1","firebrick2", "firebrick3","firebrick","red4"),
+                        midpoint = 0,na.value="grey",limits = c(-1.5,1.5), 
+                        n.breaks=5)
+```
+
+### Plot cortical effects with TBV correction
+```{r}
+pdf(file = "/Users/gumae2/Documents/Humouse_paper/Figures/Glasser_XYY_significant_wTBV.pdf",
+     width = 3,
+     height = 6)
+
+ggplot(sig_tvalues_XYY_wTBV) +   
+  geom_brain(atlas = glasser, 
+             colour="white", position = position_brain(hemi +side ~ .),
+             mapping=aes(fill=`beta-dx_groupXYY_H`)) + theme_void() +
+   theme(legend.text = element_text(size = 10))+
+    labs(title = "XYY vs XY (with TBV correction)", fill="Beta")+
+ scale_fill_gradient2(low = c("navyblue","blue","royalblue","dodgerblue1","deepskyblue1","turquoise3"),
+                        mid = NULL,
+                        high = c("goldenrod1","orange1","firebrick2", "firebrick3","firebrick","red4"),
+                        midpoint = 0,na.value="grey",limits = c(-1.5,1.5), 
+                        n.breaks=5)
+```
+
+### Subcortical results with TBV correction
+```{r}
+pdf(file = "/Users/gumae2/Documents/Humouse_paper/Figures/Aseg_XYY_axial_significant_wTBV.pdf",
+     width = 5,
+     height = 4)
+ggplot(sig_tvalues_XYY_wTBV) +   
+  geom_brain(atlas = aseg, side="axial",
+               mapping=aes(fill=`beta-dx_groupXYY_H`), show.legend=T) +
+  theme_void() + 
+  theme(legend.text = element_text(size = 10))+
+    labs(title = "XYY vs XY (with TBV correction)", fill="Beta")+
+ scale_fill_gradient2(low = c("navyblue","blue","royalblue","dodgerblue1","deepskyblue1","turquoise3"),
+                        mid = NULL,
+                        high = c("goldenrod1","orange1","firebrick2", "firebrick3","firebrick","red4"),
+                        midpoint = 0,na.value="grey",limits = c(-1.5,1.5), 
+                        n.breaks=5)
+# 
+pdf(file = "/Users/gumae2/Documents/Humouse_paper/Figures/Aseg_XYY_sagittal_significant_wTBV.pdf",
+     width = 5,
+     height = 4)
+sig_tvalues_XYY_wTBV$label <- gsub("Left-cerebellum-cortex", "right-cerebellum-white-matter",  sig_tvalues_XYY_wTBV$label)
+ggplot(sig_tvalues_XYY_wTBV) +   
+  geom_brain(atlas = aseg, side="sagittal",
+               mapping=aes(fill=`beta-dx_groupXYY_H`), show.legend=T) +
+  theme_void() + 
+  theme(legend.text = element_text(size = 10))+
+    labs(title = "XYY vs XY (with TBV correction)", fill="Beta")+
+ scale_fill_gradient2(low = c("navyblue","blue","royalblue","dodgerblue1","deepskyblue1","turquoise3"),
+                        mid = NULL,
+                        high = c("goldenrod1","orange1","firebrick2", "firebrick3","firebrick","red4"),
+                        midpoint = 0,na.value="grey",limits = c(-1.5,1.5), 
+                        n.breaks=5)
+```
+
+### Turn lmer results into a df (no TBV correction) 
+Here we can threshold the t-values to those above 5%FDR correction (and use those for the Beta values as well). This is for the TBV corrected findings
+```{r}
+model_outputs_XYY_noTBV$label <- gsub("_ROI_volume", "", model_outputs_XYY_noTBV$label)
+model_outputs_XYY_noTBV$label <- gsub("Right.", "Right-", model_outputs_XYY_noTBV$label)
+model_outputs_XYY_noTBV$label <- gsub("Left.", "Left-", model_outputs_XYY_noTBV$label)
+model_outputs_XYY_noTBV$label <- gsub("Cerebellum.Cortex", "cerebellum-cortex", model_outputs_XYY_noTBV$label)
+#model_outputs_XYY_noTBV$label <- gsub("Right-cerebellum-cortex", "right-cerebellum-white-matter",  model_outputs_XYY_noTBV$label)
+model_outputs_XYY_noTBV$label <- gsub("Left-cerebellum-cortex", "right-cerebellum-white-matter",  model_outputs_XYY_noTBV$label)
+model_outputs_XYY_noTBV$label <- gsub("Brain.Stem", "brain-stem", model_outputs_XYY_noTBV$label)
+model_outputs_XYY_noTBV$label <- gsub("Thalamus", "Thalamus-Proper", model_outputs_XYY_noTBV$label)
+
+## Threshold at 5% FDR
+sig_tvalues_pos_XYY_noTBV <- model_outputs_XYY_noTBV$`tvalue-dx_groupXYY_H`> 2.77
+significant_positive_tvalues_XYY_noTBV <-model_outputs_XYY_noTBV[sig_tvalues_pos_XYY_noTBV,]
+sig_tvalues_neg_XYY_noTBV <- model_outputs_XYY_noTBV$`tvalue-dx_groupXYY_H`< -2.77
+significant_negative_tvalues_XYY_noTBV <-model_outputs_XYY_noTBV[sig_tvalues_neg_XYY_noTBV,]
+sig_tvalues_XYY_noTBV <- model_outputs_XYY_noTBV[sig_tvalues_pos_XYY_noTBV | sig_tvalues_neg_XYY_noTBV, ]
+```
+
+### Plot unthresholded cortical effects without TBV correction
+```{r}
+pdf(file = "/Users/gumae2/Documents/Humouse_paper/Figures/Glasser_XYY_unthresholded_noTBV.pdf",
+     width = 3,
+     height = 6)
+ggplot(model_outputs_XYY_noTBV) +   
+  geom_brain(atlas = glasser, 
+             colour="white", position = position_brain(hemi +side ~ .),
+             mapping=aes(fill=`beta-dx_groupXYY_H`)) + theme_void() +
+  theme(legend.text = element_text(size = 10))+
+    labs(title = "XYY vs XY (no TBV correction)", fill="Beta")+
+   scale_fill_gradient2(low = c("navyblue","blue","royalblue","dodgerblue1","deepskyblue1","turquoise3"),
+                        mid = NULL,
+                        high = c("goldenrod1","orange1","firebrick2", "firebrick3","firebrick","red4"),
+                        midpoint = 0,na.value="grey",limits = c(-1.5,1.5), 
+                        n.breaks=5)
+```
+
+### Subcortical unthresholded results without TBV correction
+```{r}
+pdf(file = "/Users/gumae2/Documents/Humouse_paper/Figures/Aseg_XYY_axial_unthresholded_noTBV.pdf",
+     width = 5,
+     height = 4)
+ggplot(model_outputs_XYY_noTBV) +   
+  geom_brain(atlas = aseg, side="axial",
+             mapping=aes(fill=`beta-dx_groupXYY_H`), show.legend=T) +
+  theme_void() + 
+  theme(legend.text = element_text(size = 10))+
+    labs(title = "XYY vs XY (no TBV correction)", fill="Beta")+
+ scale_fill_gradient2(low = c("navyblue","blue","royalblue","dodgerblue1","deepskyblue1","turquoise3"),
+                        mid = NULL,
+                        high = c("goldenrod1","orange1","firebrick2", "firebrick3","firebrick","red4"),
+                        midpoint = 0,na.value="grey",limits = c(-1.5,1.5), 
+                        n.breaks=5)
+# 
+pdf(file = "/Users/gumae2/Documents/Humouse_paper/Figures/Aseg_XYY_sagittal_unthresholded_noTBV.pdf",
+     width = 5,
+     height = 4)
+ggplot(model_outputs_XYY_noTBV) +   
+  geom_brain(atlas = aseg, side="sagittal",
+             mapping=aes(fill=`beta-dx_groupXYY_H`), show.legend=T) +
+  theme_void() + 
+  theme(legend.text = element_text(size = 10))+
+    labs(title = "XYY vs XY (no TBV correction)", fill="Beta")+
+ scale_fill_gradient2(low = c("navyblue","blue","royalblue","dodgerblue1","deepskyblue1","turquoise3"),
+                        mid = NULL,
+                        high = c("goldenrod1","orange1","firebrick2", "firebrick3","firebrick","red4"),
+                        midpoint = 0,na.value="grey",limits = c(-1.5,1.5), 
+                        n.breaks=5)
+```
+
+### Plot cortical effects without TBV correction
+```{r}
+pdf(file = "/Users/gumae2/Documents/Humouse_paper/Figures/Glasser_XYY_significant_noTBV.pdf",
+     width = 3,
+     height = 6)
+ggplot(sig_tvalues_XYY_noTBV) +   
+  geom_brain(atlas = glasser, 
+             colour="white", position = position_brain(hemi +side ~ .),
+             mapping=aes(fill=`beta-dx_groupXYY_H`)) + theme_void() +
+ theme(legend.text = element_text(size = 10))+
+    labs(title = "XYY vs XY (with TBV correction)", fill="Beta")+
+scale_fill_gradient2(low = c("navyblue","blue","royalblue","dodgerblue1","deepskyblue1","turquoise3"),
+                        mid = NULL,
+                        high = c("goldenrod1","orange1","firebrick2", "firebrick3","firebrick","red4"),
+                        midpoint = 0,na.value="grey",limits = c(-1.5,1.5), 
+                        n.breaks=5)
+```
+
+
+
+### Subcortical significant results without TBV correction
+```{r}
+pdf(file = "/Users/gumae2/Documents/Humouse_paper/Figures/Aseg_XYY_axial_significant_noTBV.pdf",
+     width = 5,
+     height = 4)
+ggplot(sig_tvalues_XYY_noTBV) +   
+  geom_brain(atlas = aseg, side="axial",
+               mapping=aes(fill=`beta-dx_groupXYY_H`), show.legend=T) +
+  theme_void() + 
+  theme(legend.text = element_text(size = 10))+
+    labs(title = "XYY vs XY (with TBV correction)", fill="Beta")+
+ scale_fill_gradient2(low = c("navyblue","blue","royalblue","dodgerblue1","deepskyblue1","turquoise3"),
+                        mid = NULL,
+                        high = c("goldenrod1","orange1","firebrick2", "firebrick3","firebrick","red4"),
+                        midpoint = 0,na.value="grey",limits = c(-1.5,1.5), 
+                        n.breaks=5)
+pdf(file = "/Users/gumae2/Documents/Humouse_paper/Figures/Aseg_XYY_sagittal_significant_noTBV.pdf",
+     width = 5,
+     height = 4)
+ggplot(sig_tvalues_XYY_noTBV) +   
+  geom_brain(atlas = aseg, side="sagittal",
+               mapping=aes(fill=`beta-dx_groupXYY_H`), show.legend=T) +
+  theme_void() + 
+  theme(legend.text = element_text(size = 10))+
+    labs(title = "XYY vs XY (with TBV correction)", fill="Beta")+
+ scale_fill_gradient2(low = c("navyblue","blue","royalblue","dodgerblue1","deepskyblue1","turquoise3"),
+                        mid = NULL,
+                        high = c("goldenrod1","orange1","firebrick2", "firebrick3","firebrick","red4"),
+                        midpoint = 0,na.value="grey",limits = c(-1.5,1.5), 
+                        n.breaks=5)
+```
+
+## Plot overlapping ROIs for XXY and XYY
+
+### With TBV correction
+```{r}
+positive_congruent <- intersect(significant_positive_tvalues_XXY_wTBV$label, significant_positive_tvalues_XYY_wTBV$label)
+negative_congruent <- intersect(significant_negative_tvalues_XXY_wTBV$label, significant_negative_tvalues_XYY_wTBV$label)
+length(positive_congruent)
+length(negative_congruent)
+
+vec_pos <- rep(c(1), 22)
+vec_neg <- rep(c(-1), 18)
+
+df_positive_congruent <- cbind(positive_congruent, vec_pos)
+colnames(df_positive_congruent) <- c("label", "value")
+
+df_negative_congruent <- cbind(negative_congruent, vec_neg)
+colnames(df_negative_congruent) <- c("label", "value")
+
+sig_congruence_wTBV <- rbind(df_positive_congruent, df_negative_congruent) %>% as.data.frame()
+sig_congruence_wTBV$value <- as.numeric(sig_congruence_wTBV$value)
+sig_congruence_wTBV$label <- gsub("Right.", "Right-", sig_congruence_wTBV$label)
+sig_congruence_wTBV$label <- gsub("Left.", "Left-", sig_congruence_wTBV$label)
+sig_congruence_wTBV$label <- gsub("Left-cerebellum-cortex", "right-cerebellum-white-matter", sig_congruence_wTBV$label)
+#write.csv(sig_congruence_wTBV, "/Users/gumae2/Documents/Human_data/congruence_wTBV.csv")
+```
+
+### Plot cortical congruence with TBV correction
+```{r}
+pdf(file = "/Users/gumae2/Documents/Humouse_paper/Figures/Glasser_significant_congruence_with_TBV.pdf",
+     width = 3.5,
+     height = 6)
+ggplot(sig_congruence_wTBV) +   
+  geom_brain(atlas = glasser, 
+             colour="white", position = position_brain(hemi +side ~ .), 
+             mapping=aes(fill=value)) + 
+  theme_void() + theme(legend.position = "none")+
+  labs(title = "Congruence (with TBV correction)", fill="Beta") +
+          scale_fill_gradient2(low = c("royalblue"),mid = "grey",high = c("firebrick"),
+                               midpoint = 1.5,na.value="grey",limits = c(1,2))
+
+```
+
+### Subcortical congruence with TBV correction
+```{r}
+pdf(file = "/Users/gumae2/Documents/Humouse_paper/Figures/Aseg_significant_congruence_with_TBV.pdf",
+     width = 5,
+     height = 4)
+ggplot(sig_congruence_wTBV) +   
+  geom_brain(atlas = aseg, side="axial",
+               mapping=aes(fill=value), show.legend=T) +
+ theme_void() + theme(legend.position = "none")+
+  labs(title = "Congruence (with TBV correction)", fill="Beta") +
+        scale_fill_gradient2(low = c("royalblue"),mid = "grey",high = c("red"),
+                               midpoint = 1.5,na.value="grey",limits = c(1,2))
+
+pdf(file = "/Users/gumae2/Documents/Humouse_paper/Figures/Aseg_significant_congruence_sagittal_with_TBV.pdf",
+     width = 5,
+     height = 4)
+ggplot(sig_congruence_wTBV) +   
+  geom_brain(atlas = aseg, side="sagittal",
+               mapping=aes(fill=value), show.legend=T) +
+ theme_void() + theme(legend.position = "none")+
+  labs(title = "Congruence (with TBV correction)", fill="Beta") +
+        scale_fill_gradient2(low = c("royalblue"),mid = "grey",high = c("red"),
+                               midpoint = 1.5,na.value="grey",limits = c(1,2))
+```
+
+## Calculate congruent regions
+Here we identify regions that statistically significantly larger or smaller in both aneuploidy groups (XXY and XYY)
+### Without TBV correction
+```{r}
+positive_congruent <- intersect(significant_positive_tvalues_XXY_noTBV$label, significant_positive_tvalues_XYY_noTBV$label)
+negative_congruent <- intersect(significant_negative_tvalues_XXY_noTBV$label, significant_negative_tvalues_XYY_noTBV$label)
+length(positive_congruent)
+length(negative_congruent)
+
+vec_pos <- rep(c(1), 6)
+vec_neg <- rep(c(-1), 11)
+
+df_positive_congruent <- cbind(positive_congruent, vec_pos)
+colnames(df_positive_congruent) <- c("label", "value")
+
+df_negative_congruent <- cbind(negative_congruent, vec_neg)
+colnames(df_negative_congruent) <- c("label", "value")
+
+sig_congruence_noTBV <- rbind(df_positive_congruent, df_negative_congruent) %>% as.data.frame()
+sig_congruence_noTBV$value <- as.numeric(sig_congruence_noTBV$value)
+sig_congruence_noTBV$label <- gsub("Right.", "Right-", sig_congruence_noTBV$label)
+sig_congruence_noTBV$label <- gsub("Left.", "Left-", sig_congruence_noTBV$label)
+sig_congruence_noTBV$label <- gsub("Cerebellum.Cortex", "Cerebellum-Cortex", sig_congruence_noTBV$label)
+#write.csv(sig_congruence_noTBV, "/Users/gumae2/Documents/Human_data/congruence_noTBV.csv")
+```
+
+### Plot cortical congruence with TBV correction
+```{r}
+pdf(file = "/Users/gumae2/Documents/Humouse_paper/Figures/Glasser_significant_congruence_noTBV.pdf",
+     width = 3.5,
+     height = 6)
+ggplot(sig_congruence_noTBV) +   
+  geom_brain(atlas = glasser, 
+             colour="white", position = position_brain(hemi +side ~ .), 
+             mapping=aes(fill=value)) +
+    theme_void() + theme(legend.position = "none")+
+  labs(title = "Congruence XXY & XYY (no TBV correction)", fill="Beta") +
+  scale_fill_gradient2(low = c("royalblue"),mid = "grey",high = c("firebrick"),
+                               midpoint = 1.5,na.value="grey",limits = c(1,2))
+
+```
+
+### Plot subcortical congruence with TBV correction
+```{r}
+#aseg <- aseg %>% as.tibble() %>% left_join(sig_congruence_noTBV)
+
+pdf(file = "/Users/gumae2/Documents/Humouse_paper/Figures/Aseg_significant_congruence_noTBV.pdf",
+     width = 5,
+     height = 4)
+ggplot(sig_congruence_noTBV) +   
+  geom_brain(atlas = aseg, side="axial",
+             mapping=aes(fill=value), show.legend=T) +
+   theme_void() + theme(legend.position = "none")+
+  labs(title = "Congruence XXY & XYY (no TBV correction)", fill="Beta") +
+        scale_fill_gradient2(low = c("royalblue"),mid = "grey",high = c("firebrick"),
+                               midpoint = 1.5,na.value="grey",limits = c(1,2))
+
+pdf(file = "/Users/gumae2/Documents/Humouse_paper/Figures/Aseg_significant_congruence_sagittal_noTBV.pdf",
+     width = 5,
+     height = 4)
+ggplot(sig_congruence_noTBV) +   
+  geom_brain(atlas = aseg, side="sagittal",
+             mapping=aes(fill=value), show.legend=T) +
+   theme_void() + theme(legend.position = "none")+
+  labs(title = "Congruence XXY & XYY (no TBV correction)", fill="Beta") +
+        scale_fill_gradient2(low = c("royalblue"),mid = "grey",high = c("firebrick"),
+                               midpoint = 1.5,na.value="grey",limits = c(1,2))
+```
+
+## Correlate beta values for XXY and XYY
+### With TBV
+```{r}
+human_results_wTBV<-merge(model_outputs_XXY_wTBV, model_outputs_XYY_wTBV, by="label")
+ 
+# pdf(file = "/Users/gumae2/Documents/Humouse_paper/Figures/Human_beta_corr_wTBV.pdf",
+#      width = 5,
+#      height = 4)
+#beta-value
+summary(cor(human_results_wTBV$`beta-DX_GROUPXXY_H`, human_results_wTBV$`beta-dx_groupXYY_H`, method="pearson"))
+
+ggplot(human_results_wTBV, aes(x=`beta-DX_GROUPXXY_H`, y=`beta-dx_groupXYY_H`)) + 
+  geom_point() + geom_smooth(method=lm)  + geom_abline() + 
+  theme_classic()+xlab("Beta XXY_H")+ ylab("Beta XYY_H")+
+  theme(axis.text=element_text(size=12),
+        axis.title=element_text(size=14))+ 
+  xlim(-1.5,1.5) + ylim(-1.5,1.5)
+#dev.off() 
+```
+
+### Without TBV
+```{r}
+human_results_noTBV<-merge(model_outputs_XXY_noTBV, model_outputs_XYY_noTBV, by="label")
+
+summary(cor(human_results_noTBV$`beta-DX_GROUPXXY_H`, human_results_noTBV$`beta-dx_groupXYY_H`, method="pearson"))
+
+# pdf(file = "/Users/gumae2/Documents/Humouse_paper/Figures/Human_beta_corr_noTBV.pdf",
+#      width = 5,
+#      height = 4)
+ggplot(human_results_noTBV, aes(x=`beta-DX_GROUPXXY_H`, y=`beta-dx_groupXYY_H`)) + 
+  geom_point() + geom_smooth(method=lm)  + geom_abline()+ 
+  theme_classic()+xlab("Beta XXY_H")+ ylab("Beta XYY_H")+
+  theme(axis.text=element_text(size=12),
+        axis.title=element_text(size=14))+ 
+  xlim(-1.5,1.5) + ylim(-1.5,1.5) 
+#dev.off()
+```
+## Density plot of beta values with TBV
+```{r}
+library(reshape2)
+##With TBV
+## select the columns of interest
+df_human_results_wTBV <- human_results_wTBV %>% dplyr::select(c(`label`, `beta-DX_GROUPXXY_H`,`beta-dx_groupXYY_H`))
+## stack the columns containing the beta values for plotting
+df_human_results_wTBV_long <- melt(df_human_results_wTBV, id.var = c('label'), variable.name = 'mean_beta')
+write.csv(df_human_results_wTBV_long, file="/Users/gumae2/Documents/Humouse_paper/Tables/human_betas_wTBV.csv")
+## calculate the mean per group to plot the vertical line
+df_human_results_wTBV_long_1 <-df_human_results_wTBV_long %>% group_by(mean_beta) %>% summarize(mean=mean(value)) 
+
+## plot
+pdf(file = "/Users/gumae2/Documents/Humouse_paper/Figures/Human_XXY_XYY_beta_density_wTBV.pdf",
+     width = 5,
+     height = 4)
+ggplot(df_human_results_wTBV_long, aes(x=value, fill=mean_beta, color=mean_beta)) +
+    geom_density(alpha=.4) +
+    geom_vline(data=df_human_results_wTBV_long_1, aes(xintercept=mean, color=mean_beta),
+             linetype="dashed")+
+  scale_fill_manual(labels = c("XXY_H", "XYY_H"), name="Beta",values=c('#52BCA3', '#6e52bc'))+
+  scale_color_manual(label=NULL,name=NULL,guide=NULL,values = c('#52BCA3', '#6e52bc'))+
+   theme_classic()+ xlab("Beta (with TBV correction)")+ylab("Density")+
+   theme(text = element_text(size = 14))+xlim(-1.5,1.5)+ylim(0,2)+
+    geom_vline(xintercept=c(0))
+```
+
+## Levene's test
+Calculate whether there are differences in the distribution of beta values between groups for standardized beta values for XXY and XYY (relative to their controls)
+```{r}
+# Import required package
+library(car)
+  
+# Using leveneTest()
+result = leveneTest(value ~ mean_beta, df_human_results_wTBV_long)
+  
+# print the result
+print(result)
+```
+
+## Density plot of beta values without TBV 
+```{r}
+df_human_results_noTBV <- human_results_noTBV %>% dplyr::select(c(`label`, `beta-DX_GROUPXXY_H`,`beta-dx_groupXYY_H`))
+## stack the columns containing the beta values for plotting
+df_human_results_noTBV_long <- melt(df_human_results_noTBV, id.var = c('label'), variable.name = 'mean_beta')
+## calculate the mean per group to plot the vertical line
+write.csv(df_human_results_noTBV_long, file="/Users/gumae2/Documents/Humouse_paper/Tables/human_betas_wTBV.csv")
+
+df_human_results_noTBV_long_1 <-df_human_results_noTBV_long %>% group_by(mean_beta) %>% summarize(mean=mean(value)) 
+
+
+## plot
+pdf(file = "/Users/gumae2/Documents/Humouse_paper/Figures/Human_XXY_XYY_beta_density_noTBV.pdf",
+     width = 5,
+     height = 4)
+ggplot(df_human_results_noTBV_long, aes(x=value, fill=mean_beta, color=mean_beta)) +
+    geom_density(alpha=.4) +
+    geom_vline(data=df_human_results_noTBV_long_1, aes(xintercept=mean, color=mean_beta),
+             linetype="dashed")+
+  scale_fill_manual(labels = c("XXY_H", "XYY_H"), name="Beta",values=c('#52BCA3', '#6e52bc'))+
+  scale_color_manual(label=NULL,name=NULL,guide=NULL,values = c('#52BCA3', '#6e52bc'))+
+   theme_classic()+ xlab("Beta (no TBV correction)")+ylab("Density")+
+   theme(text = element_text(size = 14))+xlim(-1.5,1.5)+ylim(0,2)+
+    geom_vline(xintercept=c(0))
+#dev.off()
+```
+
+

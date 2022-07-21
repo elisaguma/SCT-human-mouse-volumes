@@ -1,0 +1,1469 @@
+---
+title: "Granular_plots"
+output: html_document
+date: '2022-05-16'
+---
+
+# Description
+This script creates the plots for a number of regions represented in figure 3 of the paper. We focus on regions that were congruently increased or decreased across aneuploidy groups in both species.
+
+
+```{r setup, echo=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(data.tree)
+library(RMINC)
+library(magrittr)
+library(broom)
+library(ggplot2)
+library(readr)
+library(ggrepel)
+library(ggpubr)
+library(PupillometryR)
+```
+
+# More Granular Plot
+
+## Import data
+```{r}
+XXY_data_glasser_aseg <- readRDS("/Users/gumae2/Documents/Human_data/df_XXY_volumes_clean_unique_HCPglasser_aseg.RDS")
+XYY_data_glasser_aseg <- readRDS("/Users/gumae2/Documents/Human_data/df_XYY_volumes_clean_unique_HCPglasser_aseg.RDS")
+```
+
+
+### define data
+```{r}
+ind <- XXY_data_glasser_aseg$DX_GROUP == 'NV' #First create an index getting the participants in the control group
+human_vols <- XXY_data_glasser_aseg[,54:ncol(XXY_data_glasser_aseg)] #Then subset the volumes for the control observations #vols from 54:461
+XXY_demo <- XXY_data_glasser_aseg[,1:53]
+vols_NV <- human_vols[ind,]
+```
+
+### calculate z-scores
+```{r}
+zscores_XXY <- matrix(0, nrow = nrow(human_vols), ncol = ncol(human_vols))
+for(j in 1:ncol(human_vols)){
+  mu <- mean(vols_NV[,j]) #Then you can compute the ROI-wise averages
+  sigma <- sd(vols_NV[,j]) #And standard deviations
+  zscores_XXY[,j] <- (human_vols[,j] - mu)/sigma #Then you can use those to make the z-score volumes
+}
+```
+
+### assign column names and "rebind" demographics data
+```{r}
+colnames(zscores_XXY)<-colnames(human_vols)
+zscore_df_XXY <- XXY_demo %>% cbind(zscores_XXY) %>% as.data.frame()
+```
+
+### Rename the grouops
+```{r}
+zscore_df_XXY$DX_GROUP <- recode_factor(zscore_df_XXY$DX_GROUP, NV = "XY_H", XXY="XXY_H")
+```
+
+
+### Define data
+```{r}
+ind <- XYY_data_glasser_aseg$dx_group == 'HV' #First create an index getting the participants in the control group
+human_vols_XYY <- XYY_data_glasser_aseg[,60:ncol(XYY_data_glasser_aseg)] #Then subset the volumes for the control observations; volumes 60:466
+XYY_demo <- XYY_data_glasser_aseg[,1:59]
+vols_HV <- human_vols_XYY[ind,]
+```
+
+### Calculate z-scores
+```{r}
+zscores_XYY <- matrix(0, nrow = nrow(human_vols_XYY), ncol = ncol(human_vols_XYY))
+for(j in 1:ncol(human_vols_XYY)){
+  mu <- mean(vols_HV[,j]) #Then you can compute the ROI-wise averages
+  sigma <- sd(vols_HV[,j]) #And standard deviations
+  zscores_XYY[,j] <- (human_vols_XYY[,j] - mu)/sigma #Then you can use those to make the z-score volumes
+}
+```
+
+### Assign column names and "rebind" demographics data
+```{r}
+colnames(zscores_XYY)<-colnames(human_vols_XYY)
+zscore_df_XYY <- XYY_demo %>% cbind(zscores_XYY) %>% as.data.frame()
+```
+
+### Rename groups
+```{r}
+zscore_df_XYY$dx_group <- recode_factor(zscore_df_XYY$dx_group, HV = "XY_H", XYY="XYY_H")
+```
+
+# Positive Congruence Human
+
+## Ventral anterior cingulate cortex (p24pr; L)
+
+### XXY human
+```{r}
+## zscore total tissue volume
+mu_p24pr_xxy<- mean(XXY_data_glasser_aseg$lh_L_p24pr_ROI_volume)
+sigma_p24pr_xxy <- sd(XXY_data_glasser_aseg$lh_L_p24pr_ROI_volume)
+XXY_data_glasser_aseg$zscored_p24pr_volume <- (XXY_data_glasser_aseg$lh_L_p24pr_ROI_volume - mu_p24pr_xxy)/sigma_p24pr_xxy 
+
+# pdf(file = "/Users/gumae2/Documents/Humouse_paper/Figures/roi_plots/XXY_H_ACCp24pr.pdf",   # The directory you want to save the file in
+#  width = 4, 
+#     height = 3) 
+L_ACCp24pr_XXY_H <- ggplot(zscore_df_XXY, aes(x = DX_GROUP, y =lh_L_p24pr_ROI_volume, group=DX_GROUP, colour=DX_GROUP, fill=DX_GROUP)) + geom_flat_violin(
+    position = position_nudge(x = .1, y = 0), alpha =.4,adjust =0.8)+
+  geom_boxplot(width = .1, outlier.shape = NA,alpha = .5) +
+  ## add justified jitter from the {gghalves} package
+  gghalves::geom_half_point(side = "l",range_scale = .4,alpha = .3) +
+  #Adjust theme
+  scale_fill_manual(values=c("#BC6E52", "#52BCA3"))+ 
+  scale_color_manual(values = c("#BC6E52", "#52BCA3"))+
+  theme_classic()+
+  labs(y="Left ACC (p24pr) Volume",x=NULL,
+    fill="DX_GROUP")+  theme(text = element_text(size = 10))+ylim(-4, 4)+
+  #scale_y_continuous(
+    #sec.axis = sec_axis(name=expression(Left ~ ACC ~ Volume ~ (mm^3)), ~ (. * sigma_p24pr_xxy) + mu_p24pr_xxy), 
+    #name="Left ACC (p24pr) Volume", limits=c(-4,4)) +
+  theme(legend.position="none")+
+coord_cartesian(xlim = c(1.2, NA), clip = "off")
+L_ACCp24pr_XXY_H 
+```
+### XYY human
+```{r}
+## zscore total tissue volume
+mu_p24pr_xyy<- mean(XYY_data_glasser_aseg$lh_L_p24pr_ROI_volume)
+sigma_p24pr_xyy <- sd(XYY_data_glasser_aseg$lh_L_p24pr_ROI_volume)
+XYY_data_glasser_aseg$zscored_p24pr_volume <- (XYY_data_glasser_aseg$lh_L_p24pr_ROI_volume - mu_p24pr_xyy)/sigma_p24pr_xyy 
+
+# pdf(file = "/Users/gumae2/Documents/Humouse_paper/Figures/roi_plots/XYY_H_ACCp24pr.pdf",   # The directory you want to save the file in
+#     width = 4, 
+#     height = 3) 
+
+L_ACCp24pr_XYY_H <- ggplot(zscore_df_XYY, aes(x = dx_group, y =lh_L_p24pr_ROI_volume, group=dx_group, colour=dx_group, fill=dx_group)) +
+  geom_flat_violin(
+    position = position_nudge(x = .1, y = 0), alpha =.4,adjust =0.8)+
+  geom_boxplot(width = .12, outlier.shape = NA,alpha = .4) +
+  ## add justified jitter from the {gghalves} package
+  gghalves::geom_half_point(side = "l",range_scale = .4,alpha = .4) +
+  #Adjust theme
+  scale_fill_manual(values=c("#BC6E52", "#6e52bc"))+#"#52BCA3"
+  scale_color_manual(values = c("#BC6E52", "#6e52bc"))+
+  theme_classic()+
+  labs(y="Left ACC (p24pr) Volume",x=NULL,
+    fill="DX_GROUP")+  theme(text = element_text(size = 10))+ylim(-4, 4)+
+  # scale_y_continuous(
+  #   sec.axis = sec_axis(name=expression(Left ~ ACC ~ Volume ~ (mm^3)), ~ (. * sigma_p24pr_xxy) + mu_p24pr_xxy), 
+  #   name="Left ACC (p24pr) Volume", limits=c(-4,4)) +
+  theme(legend.position="none")+
+coord_cartesian(xlim = c(1.2, NA), clip = "off")
+L_ACCp24pr_XYY_H 
+```
+
+## Primary somatosensory cortex (2; R)
+
+### XXY human
+```{r}
+## zscore total tissue volume
+mu_R2_xxy<- mean(XXY_data_glasser_aseg$rh_R_2_ROI_volume)
+sigma_R2_xxy <- sd(XXY_data_glasser_aseg$rh_R_2_ROI_volume)
+XXY_data_glasser_aseg$zscored_R2_volume <- (XXY_data_glasser_aseg$rh_R_2_ROI_volume - mu_R2_xxy)/sigma_R2_xxy 
+
+# pdf(file = "/Users/gumae2/Documents/Humouse_paper/Figures/roi_plots/XXY_H_R2.pdf",   # The directory you want to save the file in
+#     width = 4, 
+#     height = 3) 
+
+R_R2_XXY_H <- ggplot(zscore_df_XXY, aes(x = DX_GROUP, y =rh_R_2_ROI_volume, group=DX_GROUP, colour=DX_GROUP, fill=DX_GROUP)) + geom_flat_violin(
+    position = position_nudge(x = .1, y = 0), alpha =.4,adjust =0.8)+
+  geom_boxplot(width = .1, outlier.shape = NA,alpha = .5) +
+  ## add justified jitter from the {gghalves} package
+  gghalves::geom_half_point(side = "l",range_scale = .4,alpha = .3) +
+  #Adjust theme
+  scale_fill_manual(values=c("#BC6E52", "#52BCA3"))+ 
+  scale_color_manual(values = c("#BC6E52", "#52BCA3"))+
+  theme_classic()+
+  labs(y="Right Primary SMCTX Volume",x=NULL,
+    fill="DX_GROUP")+  theme(text = element_text(size = 10))+ylim(-4, 4)+
+  # scale_y_continuous(
+  #   sec.axis = sec_axis(name=expression(Right ~ Primary ~ SMCTX ~ Volume~ (mm^3)), ~ (. * sigma_p24pr_xxy) + mu_p24pr_xxy), 
+  #   name="Right Primary SMCTX Volume", limits=c(-4,4)) +
+  theme(legend.position="none")+
+coord_cartesian(xlim = c(1.2, NA), clip = "off")
+R_R2_XXY_H 
+```
+### XYY human
+```{r}
+## zscore total tissue volume
+mu_R2_xyy<- mean(XYY_data_glasser_aseg$rh_R_2_ROI_volume)
+sigma_R2_xyy <- sd(XYY_data_glasser_aseg$rh_R_2_ROI_volume)
+XYY_data_glasser_aseg$zscored_p24pr_volume <- (XYY_data_glasser_aseg$rh_R_2_ROI_volume - mu_R2_xyy)/sigma_R2_xyy 
+
+# pdf(file = "/Users/gumae2/Documents/Humouse_paper/Figures/roi_plots/XYY_H_R2.pdf",   # The directory you want to save the file in
+#     width = 4, 
+#     height = 3) 
+
+R_R2_XYY_H <- ggplot(zscore_df_XYY, aes(x = dx_group, y =rh_R_2_ROI_volume, group=dx_group, colour=dx_group, fill=dx_group)) +
+  geom_flat_violin(
+    position = position_nudge(x = .1, y = 0), alpha =.4,adjust =0.8)+
+  geom_boxplot(width = .12, outlier.shape = NA,alpha = .4) +
+  ## add justified jitter from the {gghalves} package
+  gghalves::geom_half_point(side = "l",range_scale = .4,alpha = .4) +
+  #Adjust theme
+  scale_fill_manual(values=c("#BC6E52", "#6e52bc"))+#"#52BCA3"
+  scale_color_manual(values = c("#BC6E52", "#6e52bc"))+
+   theme_classic()+
+  labs(y="Right Primary SMCTX Volume",x=NULL,
+    fill="DX_GROUP")+  theme(text = element_text(size = 10))+ylim(-4, 4)+
+  # scale_y_continuous(
+  #   sec.axis = sec_axis(name=expression(Right ~ Primary ~ SMCTX ~ Volume~ (mm^3)), ~ (. * sigma_R2_xxy) + mu_R2_xxy), 
+  #   name="Right Primary SMCTX Volume", limits=c(-4,4)) +
+  theme(legend.position="none")+
+coord_cartesian(xlim = c(1.2, NA), clip = "off")
+R_R2_XYY_H 
+```
+## Parietal cortex (7m; L)
+### XXY human
+```{r}
+## zscore total tissue volume
+mu_L7m_xxy<- mean(XXY_data_glasser_aseg$lh_L_7m_ROI_volume)
+sigma_L7m_xxy <- sd(XXY_data_glasser_aseg$lh_L_7m_ROI_volume)
+XXY_data_glasser_aseg$zscored_L7m_volume <- (XXY_data_glasser_aseg$lh_L_7m_ROI_volume - mu_L7m_xxy)/sigma_L7m_xxy 
+
+# pdf(file = "/Users/gumae2/Documents/Humouse_paper/Figures/roi_plots/XXY_H_7m.pdf",   # The directory you want to save the file in
+#     width = 4, 
+#     height = 3) 
+L_7m_XXY_H <- ggplot(zscore_df_XXY, aes(x = DX_GROUP, y =lh_L_7m_ROI_volume, group=DX_GROUP, colour=DX_GROUP, fill=DX_GROUP)) + geom_flat_violin(
+    position = position_nudge(x = .1, y = 0), alpha =.4,adjust =0.8)+
+  geom_boxplot(width = .1, outlier.shape = NA,alpha = .5) +
+  ## add justified jitter from the {gghalves} package
+  gghalves::geom_half_point(side = "l",range_scale = .4,alpha = .3) +
+  #Adjust theme
+  scale_fill_manual(values=c("#BC6E52", "#52BCA3"))+ 
+  scale_color_manual(values = c("#BC6E52", "#52BCA3"))+
+  theme_classic()+
+  labs(y="Left Parietal Cortex Volume",x=NULL,
+    fill="DX_GROUP")+  theme(text = element_text(size = 10))+ylim(-4, 4)+
+  # scale_y_continuous(
+  #   sec.axis = sec_axis(name=expression(Left ~ Parietal ~ Cortex ~ Volume~ (mm^3)), ~ (. * sigma_L7m_xxy) + mu_L7m_xxy), 
+  #   name="Left Parietal Cortex Volume", limits=c(-4,4)) +
+  theme(legend.position="none")+
+coord_cartesian(xlim = c(1.2, NA), clip = "off")
+L_7m_XXY_H 
+```
+### XYY human
+```{r}
+## zscore total tissue volume
+mu_L7m_xyy<- mean(XYY_data_glasser_aseg$lh_L_7m_ROI_volume)
+sigma_L7m_xyy <- sd(XYY_data_glasser_aseg$lh_L_7m_ROI_volume)
+XYY_data_glasser_aseg$zscored_L7m_volume <- (XYY_data_glasser_aseg$lh_L_7m_ROI_volume - mu_L7m_xyy)/sigma_L7m_xyy 
+
+# pdf(file = "/Users/gumae2/Documents/Humouse_paper/Figures/roi_plots/XYY_H_7m.pdf",   # The directory you want to save the file in
+#     width = 4, 
+#     height = 3) 
+L_7m_XYY_H <- ggplot(zscore_df_XYY, aes(x = dx_group, y =lh_L_7m_ROI_volume, group=dx_group, colour=dx_group, fill=dx_group)) +
+  geom_flat_violin(
+    position = position_nudge(x = .1, y = 0), alpha =.4,adjust =0.8)+
+  geom_boxplot(width = .12, outlier.shape = NA,alpha = .4) +
+  ## add justified jitter from the {gghalves} package
+  gghalves::geom_half_point(side = "l",range_scale = .4,alpha = .4) +
+  #Adjust theme
+  scale_fill_manual(values=c("#BC6E52", "#6e52bc"))+#"#52BCA3"
+  scale_color_manual(values = c("#BC6E52", "#6e52bc"))+
+    theme_classic()+
+  labs(y="Left Parietal Cortex Volume",x=NULL,
+    fill="DX_GROUP")+  theme(text = element_text(size = 10))+ylim(-4, 4)+
+  # scale_y_continuous(
+  #   sec.axis = sec_axis(name=expression(Left ~ Parietal ~ Cortex ~ Volume~ (mm^3)), ~ (. * sigma_L7m_xyy) + mu_L7m_xyy), 
+  #   name="Left Parietal Cortex Volume", limits=c(-4,4)) +
+  theme(legend.position="none")+
+coord_cartesian(xlim = c(1.2, NA), clip = "off")
+L_7m_XYY_H
+```
+
+## Primary visual cortex (V1; L & R)
+
+### XXY human
+```{r}
+## zscore total tissue volume
+mu_LV1_xxy<- mean(XXY_data_glasser_aseg$lh_L_V1_ROI_volume)
+sigma_LV1_xxy <- sd(XXY_data_glasser_aseg$lh_L_V1_ROI_volume)
+XXY_data_glasser_aseg$zscored_L7m_volume <- (XXY_data_glasser_aseg$lh_L_V1_ROI_volume - mu_L7m_xxy)/sigma_L7m_xxy 
+
+# pdf(file = "/Users/gumae2/Documents/Humouse_paper/Figures/roi_plots/XXY_H_V1.pdf",   # The directory you want to save the file in
+#     width = 4, 
+#     height = 3) 
+L_V1_XXY_H <- ggplot(zscore_df_XXY, aes(x = DX_GROUP, y =lh_L_V1_ROI_volume, group=DX_GROUP, colour=DX_GROUP, fill=DX_GROUP)) + geom_flat_violin(
+    position = position_nudge(x = .1, y = 0), alpha =.4,adjust =0.8)+
+  geom_boxplot(width = .1, outlier.shape = NA,alpha = .5) +
+  ## add justified jitter from the {gghalves} package
+  gghalves::geom_half_point(side = "l",range_scale = .4,alpha = .3) +
+  #Adjust theme
+  scale_fill_manual(values=c("#BC6E52", "#52BCA3"))+ 
+  scale_color_manual(values = c("#BC6E52", "#52BCA3"))+
+  theme_classic()+
+  labs(y="Left Primary Visual Cortex Volume",x=NULL,
+    fill="DX_GROUP")+  theme(text = element_text(size = 10))+ylim(-4, 4)+
+  # scale_y_continuous(
+  #   sec.axis = sec_axis(name=expression(Left ~ Primary ~ Visual ~ Cortex ~ Volume~ (mm^3)), ~ (. * sigma_LV1_xxy) + mu_LV1_xxy), 
+  #   name="Left Primary Visual Cortex Volume", limits=c(-4,4)) +
+  theme(legend.position="none")+
+coord_cartesian(xlim = c(1.2, NA), clip = "off")
+L_V1_XXY_H 
+```
+### XYY human
+```{r}
+## zscore total tissue volume
+mu_LV1_xyy<- mean(XYY_data_glasser_aseg$lh_L_V1_ROI_volume)
+sigma_LV1_xyy <- sd(XYY_data_glasser_aseg$lh_L_V1_ROI_volume)
+XYY_data_glasser_aseg$zscored_LV1_volume <- (XYY_data_glasser_aseg$lh_L_V1_ROI_volume - mu_LV1_xyy)/sigma_LV1_xyy 
+
+# pdf(file = "/Users/gumae2/Documents/Humouse_paper/Figures/roi_plots/XYY_H_V1.pdf",   # The directory you want to save the file in
+#     width = 4, 
+#     height = 3) 
+L_V1_XYY_H <- ggplot(zscore_df_XYY, aes(x = dx_group, y =lh_L_V1_ROI_volume, group=dx_group, colour=dx_group, fill=dx_group)) +
+  geom_flat_violin(
+    position = position_nudge(x = .1, y = 0), alpha =.4,adjust =0.8)+
+  geom_boxplot(width = .12, outlier.shape = NA,alpha = .4) +
+  ## add justified jitter from the {gghalves} package
+  gghalves::geom_half_point(side = "l",range_scale = .4,alpha = .4) +
+  #Adjust theme
+  scale_fill_manual(values=c("#BC6E52", "#6e52bc"))+#"#52BCA3"
+  scale_color_manual(values = c("#BC6E52", "#6e52bc"))+
+    theme_classic()+
+  labs(y="Left Primary Visual Cortex Volume",x=NULL,
+    fill="DX_GROUP")+  theme(text = element_text(size = 10))+ylim(-4, 4)+
+  # scale_y_continuous(
+  #   sec.axis = sec_axis(name=expression(Left ~ Primary ~ Visual ~ Cortex ~ Volume~ (mm^3)), ~ (. * sigma_LV1_xyy) + mu_LV1_xyy), 
+  #   name="Left Primary Visual Cortex Volume", limits=c(-4,4)) +
+  theme(legend.position="none")+
+coord_cartesian(xlim = c(1.2, NA), clip = "off")
+L_V1_XYY_H
+```
+
+
+
+
+
+# Negative Congruence Human
+
+## Right cerebellum
+
+### XXY human
+```{r}
+## zscore total tissue volume
+mu_Rcerebellum_xxy<- mean(XXY_data_glasser_aseg$Right.Cerebellum.Cortex)
+sigma_Rcerebellum_xxy <- sd(XXY_data_glasser_aseg$Right.Cerebellum.Cortex)
+XXY_data_glasser_aseg$zscored_Rcerebellum_volume <- (XXY_data_glasser_aseg$Right.Cerebellum.Cortex - mu_Rcerebellum_xxy)/sigma_Rcerebellum_xxy 
+
+# pdf(file = "/Users/gumae2/Documents/Humouse_paper/Figures/roi_plots/XXY_H_cerebellum.pdf",   # The directory you want to save the file in
+#     width = 4, 
+#     height = 3)
+R_cerebellum_XXY_H <- ggplot(zscore_df_XXY, aes(x = DX_GROUP, y =Right.Cerebellum.Cortex, group=DX_GROUP, colour=DX_GROUP, fill=DX_GROUP)) + geom_flat_violin(
+    position = position_nudge(x = .1, y = 0), alpha =.4,adjust =0.8)+
+  geom_boxplot(width = .1, outlier.shape = NA,alpha = .5) +
+  ## add justified jitter from the {gghalves} package
+  gghalves::geom_half_point(side = "l",range_scale = .4,alpha = .3) +
+  #Adjust theme
+  scale_fill_manual(values=c("#BC6E52", "#52BCA3"))+ 
+  scale_color_manual(values = c("#BC6E52", "#52BCA3"))+
+  theme_classic()+
+  labs(y="Right Cerebellum Cortex Volume",x=NULL,
+    fill="DX_GROUP")+  theme(text = element_text(size = 10))+ylim(-4, 4)+
+  # scale_y_continuous(
+  #   sec.axis = sec_axis(name=expression(Right ~ Cerebellum ~ Cortex ~ Volume~ (mm^3)), ~ (. * sigma_Rcerebellum_xxy) + mu_Rcerebellum_xxy), 
+  #   name="Right Cerebellum Cortex Volume", limits=c(-4,4)) +
+  theme(legend.position="none")+
+coord_cartesian(xlim = c(1.2, NA), clip = "off")
+R_cerebellum_XXY_H 
+```
+### XYY human
+```{r}
+## zscore total tissue volume
+mu_Rcerebellum_xyy<- mean(XYY_data_glasser_aseg$Right.Cerebellum.Cortex)
+sigma_Rcerebellum_xyy <- sd(XYY_data_glasser_aseg$Right.Cerebellum.Cortex)
+XYY_data_glasser_aseg$zscored_Rcerebellum_volume <- (XYY_data_glasser_aseg$Right.Cerebellum.Cortex - mu_Rcerebellum_xyy)/sigma_Rcerebellum_xyy 
+
+# pdf(file = "/Users/gumae2/Documents/Humouse_paper/Figures/roi_plots/XYY_H_cerebellum.pdf",   # The directory you want to save the file in
+#     width = 4, 
+#     height = 3)
+R_cerebellum_XYY_H <- ggplot(zscore_df_XYY, aes(x = dx_group, y =Right.Cerebellum.Cortex, group=dx_group, colour=dx_group, fill=dx_group)) +
+  geom_flat_violin(
+    position = position_nudge(x = .1, y = 0), alpha =.4,adjust =0.8)+
+  geom_boxplot(width = .12, outlier.shape = NA,alpha = .4) +
+  ## add justified jitter from the {gghalves} package
+  gghalves::geom_half_point(side = "l",range_scale = .4,alpha = .4) +
+  #Adjust theme
+  scale_fill_manual(values=c("#BC6E52", "#6e52bc"))+#"#52BCA3"
+  scale_color_manual(values = c("#BC6E52", "#6e52bc"))+
+    theme_classic()+
+  labs(y="Right Cerebellum Cortex Volume",x=NULL,
+    fill="DX_GROUP")+  theme(text = element_text(size = 10))+ylim(-4, 4)+
+  # scale_y_continuous(
+  #   sec.axis = sec_axis(name=expression(Right ~ Cerebellum ~ Cortex ~ Volume~ (mm^3)), ~ (. * sigma_Rcerebellum_xyy) + mu_Rcerebellum_xyy), 
+  #   name="Right Cerebellum Cortex Volume", limits=c(-4,4)) +
+  theme(legend.position="none")+
+coord_cartesian(xlim = c(1.2, NA), clip = "off")
+R_cerebellum_XYY_H
+```
+
+#Left Pallidum 
+
+### XXY human
+```{r}
+mu_Lpallidum_xxy<- mean(XXY_data_glasser_aseg$Left.Pallidum)
+sigma_Lpallidum_xxy <- sd(XXY_data_glasser_aseg$Left.Pallidum)
+XXY_data_glasser_aseg$zscored_Rpallidum_volume <- (XXY_data_glasser_aseg$Left.Pallidum - mu_Lpallidum_xxy)/sigma_Lpallidum_xxy 
+
+# pdf(file = "/Users/gumae2/Documents/Humouse_paper/Figures/roi_plots/XXY_H_LPallidum.pdf",   # The directory you want to save the file in
+#     width = 4, 
+#     height = 3)
+L_pallidum_XXY_H <- ggplot(zscore_df_XXY, aes(x = DX_GROUP, y =Left.Pallidum, group=DX_GROUP, colour=DX_GROUP, fill=DX_GROUP)) + geom_flat_violin(
+    position = position_nudge(x = .1, y = 0), alpha =.4,adjust =0.8)+
+  geom_boxplot(width = .1, outlier.shape = NA,alpha = .5) +
+  ## add justified jitter from the {gghalves} package
+  gghalves::geom_half_point(side = "l",range_scale = .4,alpha = .3) +
+  #Adjust theme
+  scale_fill_manual(values=c("#BC6E52", "#52BCA3"))+ 
+  scale_color_manual(values = c("#BC6E52", "#52BCA3"))+
+  theme_classic()+
+  labs(y="Left Pallidum Volume",x=NULL,
+    fill="DX_GROUP")+  theme(text = element_text(size = 10))+ylim(-4, 4)+
+  # scale_y_continuous(
+  #   sec.axis = sec_axis(name=expression(Left ~ Pallidum ~ Volume~ (mm^3)), ~ (. * sigma_Lpallidum_xxy) + mu_Lpallidum_xxy), 
+  #   name="Left Pallidum Volume", limits=c(-4,4)) +
+  theme(legend.position="none")+
+coord_cartesian(xlim = c(1.2, NA), clip = "off")
+L_pallidum_XXY_H 
+```
+### XYY human
+```{r}
+mu_Lpallidum_xyy<- mean(XYY_data_glasser_aseg$Left.Pallidum)
+sigma_Lpallidum_xyy <- sd(XYY_data_glasser_aseg$Left.Pallidum)
+XYY_data_glasser_aseg$zscored_Lpallidum_volume <- (XYY_data_glasser_aseg$Left.Pallidum - mu_Lpallidum_xyy)/sigma_Lpallidum_xyy 
+
+# pdf(file = "/Users/gumae2/Documents/Humouse_paper/Figures/roi_plots/XYY_H_LPallidum.pdf",   # The directory you want to save the file in
+#     width = 4, 
+#     height = 3)
+L_pallidum_XYY_H <- ggplot(zscore_df_XYY, aes(x = dx_group, y =Left.Pallidum, group=dx_group, colour=dx_group, fill=dx_group)) +
+  geom_flat_violin(
+    position = position_nudge(x = .1, y = 0), alpha =.4,adjust =0.8)+
+  geom_boxplot(width = .12, outlier.shape = NA,alpha = .4) +
+  ## add justified jitter from the {gghalves} package
+  gghalves::geom_half_point(side = "l",range_scale = .4,alpha = .4) +
+  #Adjust theme
+  scale_fill_manual(values=c("#BC6E52", "#6e52bc"))+#"#52BCA3"
+  scale_color_manual(values = c("#BC6E52", "#6e52bc"))+
+    theme_classic()+
+  labs(y="Left Pallidum Volume",x=NULL,
+    fill="DX_GROUP")+  theme(text = element_text(size = 10))+ylim(-4, 4)+
+  # scale_y_continuous(
+  #   sec.axis = sec_axis(name=expression(Left ~ Pallidum ~ Volume~ (mm^3)), ~ (. * sigma_Lpallidum_xyy) + mu_Lpallidum_xyy), 
+  #   name="Left Pallidum  Volume", limits=c(-4,4)) +
+  theme(legend.position="none")+
+coord_cartesian(xlim = c(1.2, NA), clip = "off")
+L_pallidum_XYY_H
+```
+
+#Right Pallidum 
+
+### XXY human
+```{r}
+mu_Rpallidum_xxy<- mean(XXY_data_glasser_aseg$Right.Pallidum)
+sigma_Rpallidum_xxy <- sd(XXY_data_glasser_aseg$Right.Pallidum)
+XXY_data_glasser_aseg$zscored_Rpallidum_volume <- (XXY_data_glasser_aseg$Right.Pallidum - mu_Rpallidum_xxy)/sigma_Rpallidum_xxy 
+
+# pdf(file = "/Users/gumae2/Documents/Humouse_paper/Figures/roi_plots/XXY_H_RPallidum.pdf",   # The directory you want to save the file in
+#     width = 4, 
+#     height = 3)
+R_pallidum_XXY_H <- ggplot(zscore_df_XXY, aes(x = DX_GROUP, y =Right.Pallidum, group=DX_GROUP, colour=DX_GROUP, fill=DX_GROUP)) + geom_flat_violin(
+    position = position_nudge(x = .1, y = 0), alpha =.4,adjust =0.8)+
+  geom_boxplot(width = .1, outlier.shape = NA,alpha = .5) +
+  ## add justified jitter from the {gghalves} package
+  gghalves::geom_half_point(side = "l",range_scale = .4,alpha = .3) +
+  #Adjust theme
+  scale_fill_manual(values=c("#BC6E52", "#52BCA3"))+ 
+  scale_color_manual(values = c("#BC6E52", "#52BCA3"))+
+  theme_classic()+
+  labs(y="Right Pallidum Volume",x=NULL,
+    fill="DX_GROUP")+  theme(text = element_text(size = 10))+ylim(-4, 4)+
+  # scale_y_continuous(
+  #   sec.axis = sec_axis(name=expression(Right ~ Pallidum ~ Volume~ (mm^3)), ~ (. * sigma_Rpallidum_xxy) + mu_Rpallidum_xxy), 
+  #   name="Right Pallidum Volume", limits=c(-4,4)) +
+  theme(legend.position="none")+
+coord_cartesian(xlim = c(1.2, NA), clip = "off")
+R_pallidum_XXY_H 
+```
+### XYY human
+```{r}
+mu_Rpallidum_xyy<- mean(XYY_data_glasser_aseg$Right.Pallidum)
+sigma_Rpallidum_xyy <- sd(XYY_data_glasser_aseg$Right.Pallidum)
+XYY_data_glasser_aseg$zscored_Rpallidum_volume <- (XYY_data_glasser_aseg$Right.Pallidum - mu_Rpallidum_xyy)/sigma_Rpallidum_xyy 
+
+# pdf(file = "/Users/gumae2/Documents/Humouse_paper/Figures/roi_plots/XYY_H_RPallidum.pdf",   # The directory you want to save the file in
+#     width = 4, 
+#     height = 3)
+R_pallidum_XYY_H <- ggplot(zscore_df_XYY, aes(x = dx_group, y =Right.Pallidum, group=dx_group, colour=dx_group, fill=dx_group)) +
+  geom_flat_violin(
+    position = position_nudge(x = .1, y = 0), alpha =.4,adjust =0.8)+
+  geom_boxplot(width = .12, outlier.shape = NA,alpha = .4) +
+  ## add justified jitter from the {gghalves} package
+  gghalves::geom_half_point(side = "l",range_scale = .4,alpha = .4) +
+  #Adjust theme
+  scale_fill_manual(values=c("#BC6E52", "#6e52bc"))+#"#52BCA3"
+  scale_color_manual(values = c("#BC6E52", "#6e52bc"))+
+    theme_classic()+
+  labs(y="Right Pallidum Volume",x=NULL,
+    fill="DX_GROUP")+  theme(text = element_text(size = 10))+ylim(-4, 4)+
+  # scale_y_continuous(
+  #   sec.axis = sec_axis(name=expression(Right ~ Pallidum ~ Volume~ (mm^3)), ~ (. * sigma_Rpallidum_xyy) + mu_Rpallidum_xyy), 
+  #   name="Right Pallidum  Volume", limits=c(-4,4)) +
+  theme(legend.position="none")+
+coord_cartesian(xlim = c(1.2, NA), clip = "off")
+R_pallidum_XYY_H
+```
+
+
+## Posterior orbitofrontal cortex complex (pOFC; L)
+
+### XXY human
+```{r}
+mu_LpOFC_xxy<- mean(XXY_data_glasser_aseg$lh_L_pOFC_ROI_volume)
+sigma_LpOFC_xxy <- sd(XXY_data_glasser_aseg$lh_L_pOFC_ROI_volume)
+XXY_data_glasser_aseg$zscored_LpOFC_volume <- (XXY_data_glasser_aseg$lh_L_pOFC_ROI_volume - mu_LpOFC_xxy)/sigma_LpOFC_xxy 
+
+# pdf(file = "/Users/gumae2/Documents/Humouse_paper/Figures/roi_plots/XXY_H_pOFC.pdf",   # The directory you want to save the file in
+#     width = 4, 
+#     height = 3)
+L_pOFC_XXY_H <- ggplot(zscore_df_XXY, aes(x = DX_GROUP, y =lh_L_pOFC_ROI_volume, group=DX_GROUP, colour=DX_GROUP, fill=DX_GROUP)) + geom_flat_violin(
+    position = position_nudge(x = .1, y = 0), alpha =.4,adjust =0.8)+
+  geom_boxplot(width = .1, outlier.shape = NA,alpha = .5) +
+  ## add justified jitter from the {gghalves} package
+  gghalves::geom_half_point(side = "l",range_scale = .4,alpha = .3) +
+  #Adjust theme
+  scale_fill_manual(values=c("#BC6E52", "#52BCA3"))+ 
+  scale_color_manual(values = c("#BC6E52", "#52BCA3"))+
+  theme_classic()+
+  labs(y="Left Posterior OFC Volume",x=NULL,
+    fill="DX_GROUP")+  theme(text = element_text(size = 10))+ylim(-4, 4)+
+  # scale_y_continuous(
+  #   sec.axis = sec_axis(name=expression(Left ~ Posterior ~ OFC~ Volume~ (mm^3)), ~ (. * sigma_LpOFC_xxy) + mu_LpOFC_xxy), 
+  #   name="Left Posterior OFC Volume", limits=c(-4,4)) +
+  theme(legend.position="none")+
+coord_cartesian(xlim = c(1.2, NA), clip = "off")
+L_pOFC_XXY_H 
+```
+### XYY human
+```{r}
+mu_LpOFC_xyy<- mean(XYY_data_glasser_aseg$lh_L_pOFC_ROI_volume)
+sigma_LpOFC_xyy <- sd(XYY_data_glasser_aseg$lh_L_pOFC_ROI_volume)
+XYY_data_glasser_aseg$zscored_LpOFC_volume <- (XYY_data_glasser_aseg$lh_L_pOFC_ROI_volume - mu_LpOFC_xyy)/sigma_LpOFC_xxy 
+
+# pdf(file = "/Users/gumae2/Documents/Humouse_paper/Figures/roi_plots/XYY_H_pOFC.pdf",   # The directory you want to save the file in
+#     width = 4, 
+#     height = 3)
+L_pOFC_XYY_H <- ggplot(zscore_df_XYY, aes(x = dx_group, y =lh_L_pOFC_ROI_volume, group=dx_group, colour=dx_group, fill=dx_group)) +
+  geom_flat_violin(
+    position = position_nudge(x = .1, y = 0), alpha =.4,adjust =0.8)+
+  geom_boxplot(width = .12, outlier.shape = NA,alpha = .4) +
+  ## add justified jitter from the {gghalves} package
+  gghalves::geom_half_point(side = "l",range_scale = .4,alpha = .4) +
+  #Adjust theme
+  scale_fill_manual(values=c("#BC6E52", "#6e52bc"))+#"#52BCA3"
+  scale_color_manual(values = c("#BC6E52", "#6e52bc"))+
+   theme_classic()+
+  labs(y="Left Posterior OFC Volume",x=NULL,
+    fill="DX_GROUP")+  theme(text = element_text(size = 10))+ylim(-4, 4)+
+  # scale_y_continuous(
+  #   sec.axis = sec_axis(name=expression(Left ~ Posterior ~ OFC~ Volume~ (mm^3)), ~ (. * sigma_LpOFC_xyy) + mu_LpOFC_xyy), 
+  #   name="Left Posterior OFC Volume", limits=c(-4,4)) +
+  theme(legend.position="none")+
+coord_cartesian(xlim = c(1.2, NA), clip = "off")
+L_pOFC_XYY_H 
+```
+
+## Insula (13I; L)
+
+### XXY human
+```{r}
+mu_Linsula_xxy<- mean(XXY_data_glasser_aseg$lh_L_13l_ROI_volume)
+sigma_Linsula_xxy <- sd(XXY_data_glasser_aseg$lh_L_13l_ROI_volume)
+XXY_data_glasser_aseg$zscored_Linsula_volume <- (XXY_data_glasser_aseg$lh_L_13l_ROI_volume - mu_Linsula_xxy)/sigma_Linsula_xxy 
+
+# pdf(file = "/Users/gumae2/Documents/Humouse_paper/Figures/roi_plots/XXY_H_Linsula.pdf",   # The directory you want to save the file in
+#     width = 4, 
+#     height = 3)
+L_insula_XXY_H <- ggplot(zscore_df_XXY, aes(x = DX_GROUP, y =lh_L_13l_ROI_volume, group=DX_GROUP, colour=DX_GROUP, fill=DX_GROUP)) + geom_flat_violin(
+    position = position_nudge(x = .1, y = 0), alpha =.4,adjust =0.8)+
+  geom_boxplot(width = .1, outlier.shape = NA,alpha = .5) +
+  ## add justified jitter from the {gghalves} package
+  gghalves::geom_half_point(side = "l",range_scale = .4,alpha = .3) +
+  #Adjust theme
+  scale_fill_manual(values=c("#BC6E52", "#52BCA3"))+ 
+  scale_color_manual(values = c("#BC6E52", "#52BCA3"))+
+  theme_classic()+
+  labs(y="Left Insula Volume",x=NULL,
+    fill="DX_GROUP")+  theme(text = element_text(size = 10))+ylim(-4, 4)+
+  # scale_y_continuous(
+  #   sec.axis = sec_axis(name=expression(Left ~ Insula~ Volume~ (mm^3)), ~ (. * sigma_Linsula_xxy) + mu_Linsula_xxy), 
+  #   name="Left Insula Volume", limits=c(-4,4)) +
+  theme(legend.position="none")+
+coord_cartesian(xlim = c(1.2, NA), clip = "off")
+L_insula_XXY_H 
+```
+### XYY human
+```{r}
+mu_Linsula_xyy<- mean(XYY_data_glasser_aseg$lh_L_13l_ROI_volume)
+sigma_Linsula_xyy <- sd(XYY_data_glasser_aseg$lh_L_13l_ROI_volume)
+XYY_data_glasser_aseg$zscored_Linsula_volume <- (XYY_data_glasser_aseg$lh_L_13l_ROI_volume - mu_Linsula_xyy)/sigma_Linsula_xxy 
+
+# pdf(file = "/Users/gumae2/Documents/Humouse_paper/Figures/roi_plots/XYY_H_L_insula.pdf",   # The directory you want to save the file in
+#     width = 4, 
+#     height = 3)
+L_insula_XYY_H <- ggplot(zscore_df_XYY, aes(x = dx_group, y =lh_L_13l_ROI_volume, group=dx_group, colour=dx_group, fill=dx_group)) +
+  geom_flat_violin(
+    position = position_nudge(x = .1, y = 0), alpha =.4,adjust =0.8)+
+  geom_boxplot(width = .12, outlier.shape = NA,alpha = .4) +
+  ## add justified jitter from the {gghalves} package
+  gghalves::geom_half_point(side = "l",range_scale = .4,alpha = .4) +
+  #Adjust theme
+  scale_fill_manual(values=c("#BC6E52", "#6e52bc"))+#"#52BCA3"
+  scale_color_manual(values = c("#BC6E52", "#6e52bc"))+
+   theme_classic()+
+  labs(y="Left Insula Volume",x=NULL,
+    fill="DX_GROUP")+  theme(text = element_text(size = 10))+ylim(-4, 4)+
+  # scale_y_continuous(
+  #   sec.axis = sec_axis(name=expression(Left ~ Insula ~ Volume~ (mm^3)), ~ (. * sigma_Linsula_xyy) + mu_Linsula_xyy), 
+  #   name="Left Insula Volume", limits=c(-4,4)) +
+  theme(legend.position="none")+
+coord_cartesian(xlim = c(1.2, NA), clip = "off")
+L_insula_XYY_H 
+```
+
+
+# Import mouse data
+
+```{r}
+library(data.tree)
+library(RMINC)
+library(magrittr)
+library(ggplot2)
+library(MRIcrotome)
+
+pathHome <- "/Users/gumae2/Documents/Humouse/"
+dfDemographics <- readRDS(str_c(pathHome, "input_data/", "gf2018noout.RDS"))
+#treeVols_bilat <- readRDS(str_c(pathHome, "input_data/", "testTree.RDS"))
+treeVols_LR <- readRDS(str_c(pathHome, "input_data/", "SCT-vols-no-outliers.RDS"))
+source('/Users/gumae2/Documents/Humouse/input_data/tree_tools.R')
+```
+
+```{r}
+treeModel_LR <- Clone(treeVols_LR)
+LR_tree_pruned <- Clone(treeVols_LR)
+nodes_to_cut <- c("ventricular systems", "fiber tracts") #remove ventricles and cranial nerves
+pruneAnatTree(LR_tree_pruned, nodes = nodes_to_cut, method = "AtNode")
+```
+
+Calculate total tissue volume
+```{r}
+vols_LR <- treeModel_LR$Get("volumes") %>% as_tibble
+dat_LR <- dfDemographics %>%  cbind(vols_LR)
+
+dfDemographics$shorthand <- recode_factor(dfDemographics$shorthand, XYM = "XY_M", XXYM="XXY_M", XYYM="XYY_M")
+dfDemographics$ventricle_volume <- dat_LR$`ventricular systems`
+dfDemographics$total_tissue_volume<- dfDemographics$brainVolume - dfDemographics$ventricle_volume
+```
+
+##Z -scoring the total tissue volume of males relative to the XY males for the entire dataset
+```{r}
+ind <- dfDemographics$genotype == "UY-Sry"
+treeModel_LR$Do(function(node){
+node$ctrl_mean <- mean(node$volumes[ind])
+node$ctrl_sd <- sd(node$volumes[ind])
+node$zscores <- (node$volumes - node$ctrl_mean)/node$ctrl_sd
+})
+
+## zscore total tissue volume
+mu <- mean(dfDemographics$total_tissue_volume)
+sigma <- sd(dfDemographics$total_tissue_volume)
+dfDemographics$zscored_total_tissue_volume <- (dfDemographics$total_tissue_volume - mu)/sigma 
+```
+
+# Z-scored volumes
+
+## Z-scoring the XXY and XYY males relative to the XY males
+```{r}
+LR_tree_pruned$Do(function(node){
+#Attach metadata to the tree
+    node$dfDemographics <- dfDemographics
+}) 
+```
+
+### Zscore volumes outside of the tree to run a regular linear model
+```{r}
+#extract volumes
+#vols <- tree_pruned$Get("volumes", filterFun = isLeaf) %>% as_tibble
+vols_LR <- LR_tree_pruned$Get("volumes") %>% as_tibble
+#attach demographics
+dfVols_LR <- cbind(dfDemographics, vols_LR)
+#filter for XXY
+dfVols_LR_XXY  <- dfVols_LR %>%
+  filter(shorthand %in% c("XY_M", "XXY_M")) %>% 
+  mutate(shorthand = factor(shorthand, levels = c("XY_M", "XXY_M")))
+#filter for XYY
+dfVols_LR_XYY  <- dfVols_LR %>%
+  filter(shorthand %in% c("XY_M", "XYY_M")) %>% 
+  mutate(shorthand = factor(shorthand, levels = c("XY_M", "XYY_M")))
+```
+
+### zscore XXY, just leaves
+```{r}
+ind_XY_M <- dfVols_LR_XXY$shorthand == 'XY_M' #First create an index getting the participants in the control group
+vol_cols_XXY <- dfVols_LR_XXY[,16:ncol(dfVols_LR_XXY)] #Then subset the volumes for the control observations #vols from 54:461
+XXY_demo <- dfVols_LR_XXY[,1:15]
+vols_XY_M <- vol_cols_XXY[ind_XY_M,]
+df_zscores_LR_XXY <- matrix(0, nrow = nrow(vol_cols_XXY), ncol = ncol(vol_cols_XXY))
+for(j in 1:ncol(vol_cols_XXY)){
+  mu <- mean(vols_XY_M[,j]) #Then you can compute the ROI-wise averages
+  sigma <- sd(vols_XY_M[,j]) #And standard deviations
+  df_zscores_LR_XXY[,j] <- (vol_cols_XXY[,j] - mu)/sigma #Then you can use those to make the z-score volumes
+}
+colnames(df_zscores_LR_XXY)<-colnames(vol_cols_XXY)
+df_zscore_LR_XXY <- XXY_demo %>% cbind(df_zscores_LR_XXY) 
+```
+
+
+### zscore XYY
+```{r}
+ind_XY_M <- dfVols_LR_XYY$shorthand == 'XY_M' #First create an index getting the participants in the control group
+vol_cols_XYY <- dfVols_LR_XYY[,16:ncol(dfVols_LR_XYY)] #Then subset the volumes for the control observations #vols from 54:461
+XYY_demo <- dfVols_LR_XYY[,1:15]
+vols_XY_M <- vol_cols_XYY[ind_XY_M,]
+df_zscores_LR_XYY <- matrix(0, nrow = nrow(vol_cols_XYY), ncol = ncol(vol_cols_XYY))
+for(j in 1:ncol(vol_cols_XYY)){
+  mu <- mean(vols_XY_M[,j]) #Then you can compute the ROI-wise averages
+  sigma <- sd(vols_XY_M[,j]) #And standard deviations
+  df_zscores_LR_XYY[,j] <- (vol_cols_XYY[,j] - mu)/sigma #Then you can use those to make the z-score volumes
+}
+colnames(df_zscores_LR_XYY)<-colnames(vol_cols_XYY)
+df_zscore_LR_XYY <- XYY_demo %>% cbind(df_zscores_LR_XYY) 
+```
+
+
+# Positive Congruence Mouse
+
+### Left medial parietal association cortex (99.7%)
+
+### XXY mouse
+```{r}
+mu_Lparietal_xxy<- mean(dfVols_LR_XXY$`left Medial parietal association cortex`)
+sigma_Lparietal_xxy <- sd(dfVols_LR_XXY$`left Medial parietal association cortex`)
+dfVols_LR_XXY$zscored_L_parietal_volume <- (dfVols_LR_XXY$`left Medial parietal association cortex` - mu_Lparietal_xxy)/sigma_Lparietal_xxy 
+
+# pdf(file = "/Users/gumae2/Documents/Humouse_paper/Figures/roi_plots/XXY_M_Lparietal.pdf",   # The directory you want to save the file in
+#     width = 4, 
+#     height = 3)
+L_parietal_XXY_M <- ggplot(df_zscore_LR_XXY, aes(x = shorthand, y = `left Medial parietal association cortex`, group=shorthand, colour=shorthand, fill=shorthand)) + 
+geom_flat_violin(
+    position = position_nudge(x = .1, y = 0), alpha =.4,adjust =0.8)+
+  geom_boxplot(width = .1, outlier.shape = NA,alpha = .5) +
+  ## add justified jitter from the {gghalves} package
+  gghalves::geom_half_point(side = "l",range_scale = .4,alpha = .3) +
+  #Adjust theme
+  scale_fill_manual(values=c("#BC6E52", "#52BCA3"))+ 
+  scale_color_manual(values = c("#BC6E52", "#52BCA3"))+
+  theme_classic()+
+  labs(y="Left M Parietal Cortex Volume",x=NULL,
+    fill="shorthand")+  theme(text = element_text(size = 10))+ylim(-4, 4)+
+  # scale_y_continuous(
+  #   sec.axis = sec_axis(name=expression(Left ~ M ~ Parietal ~ Cortex ~ Volume~ (mm^3)), ~ (. * sigma_Lparietal_xxy) + mu_Lparietal_xxy), 
+  #   name="Left M Parietal Cortex Volume", limits=c(-4,4)) +
+  theme(legend.position="none")+
+coord_cartesian(xlim = c(1.2, NA), clip = "off")
+L_parietal_XXY_M 
+```
+### XYY mouse
+```{r}
+## zscore total tissue volume
+mu_Lparietal_xyy<- mean(dfVols_LR_XYY$`left Medial parietal association cortex`)
+sigma_Lparietal_xyy <- sd(dfVols_LR_XYY$`left Medial parietal association cortex`)
+dfVols_LR_XYY$zscored_L_parietal_volume <- (dfVols_LR_XYY$`left Medial parietal association cortex` - mu_Lparietal_xyy)/sigma_Lparietal_xyy 
+
+# pdf(file = "/Users/gumae2/Documents/Humouse_paper/Figures/roi_plots/XYY_M_Lparietal.pdf",   # The directory you want to save the file in
+#     width = 4, 
+#     height = 3)
+
+L_parietal_XYY_M <- ggplot(df_zscore_LR_XYY, aes(x = shorthand, y =`left Medial parietal association cortex`, group=shorthand, colour=shorthand, fill=shorthand)) +
+  geom_flat_violin(
+    position = position_nudge(x = .1, y = 0), alpha =.4,adjust =0.8)+
+  geom_boxplot(width = .12, outlier.shape = NA,alpha = .4) +
+  ## add justified jitter from the {gghalves} package
+  gghalves::geom_half_point(side = "l",range_scale = .4,alpha = .4) +
+  #Adjust theme
+  scale_fill_manual(values=c("#BC6E52", "#6e52bc"))+#"#52BCA3"
+  scale_color_manual(values = c("#BC6E52", "#6e52bc"))+
+  theme_classic()+
+   labs(y="Left M Parietal Cortex Volume",x=NULL,
+    fill="shorthand")+  theme(text = element_text(size = 10))+ylim(-4, 4)+
+  # scale_y_continuous(
+  #   sec.axis = sec_axis(name=expression(Left ~ M ~ Parietal ~ Cortex ~ Volume~ (mm^3)), ~ (. * sigma_Lparietal_xyy) + mu_Lparietal_xyy), 
+  #   name="Left M Parietal Cortex Volume", limits=c(-4,4)) +
+  theme(legend.position="none")+
+coord_cartesian(xlim = c(1.2, NA), clip = "off")
+L_parietal_XYY_M 
+```
+
+## Right pallidum (98.7%)
+
+### XXY mouse
+```{r}
+mu_Rpallidum_xxy<- mean(dfVols_LR_XXY$`right Pallidum, dorsal region`)
+sigma_Rpallidum_xxy <- sd(dfVols_LR_XXY$`right Pallidum, dorsal region`)
+dfVols_LR_XXY$zscored_Rpallidum_volume <- (dfVols_LR_XXY$`right Pallidum, dorsal region` - mu_Rpallidum_xxy)/sigma_Rpallidum_xxy 
+
+# pdf(file = "/Users/gumae2/Documents/Humouse_paper/Figures/roi_plots/XXY_M_Rpallidum.pdf",   # The directory you want to save the file in
+#     width = 4, 
+#     height = 3)
+R_pallidum_XXY_M <- ggplot(df_zscore_LR_XXY, aes(x = shorthand, y = `right Pallidum, dorsal region`, group=shorthand, colour=shorthand, fill=shorthand)) + 
+geom_flat_violin(
+    position = position_nudge(x = .1, y = 0), alpha =.4,adjust =0.8)+
+  geom_boxplot(width = .1, outlier.shape = NA,alpha = .5) +
+  ## add justified jitter from the {gghalves} package
+  gghalves::geom_half_point(side = "l",range_scale = .4,alpha = .3) +
+  #Adjust theme
+  scale_fill_manual(values=c("#BC6E52", "#52BCA3"))+ 
+  scale_color_manual(values = c("#BC6E52", "#52BCA3"))+
+  theme_classic()+
+  labs(y="Right Pallidum Volume",x=NULL,
+    fill="shorthand")+  theme(text = element_text(size = 10))+ylim(-4, 4)+
+  # scale_y_continuous(
+  #   sec.axis = sec_axis(name=expression(Right ~ Pallidum ~ Volume~ (mm^3)), ~ (. * sigma_Rpallidum_xxy) + mu_Rpallidum_xxy), 
+  #   name="Right Pallidum Volume", limits=c(-4,4)) +
+  theme(legend.position="none")+
+coord_cartesian(xlim = c(1.2, NA), clip = "off")
+R_pallidum_XXY_M 
+```
+### XYY mouse
+```{r}
+## zscore total tissue volume
+mu_Rpallidum_xyy<- mean(dfVols_LR_XYY$`right Pallidum, dorsal region`)
+sigma_Rpallidum_xyy <- sd(dfVols_LR_XYY$`right Pallidum, dorsal region`)
+dfVols_LR_XYY$zscored_Rpallidum_volume <- (dfVols_LR_XYY$`right Pallidum, dorsal region` - mu_Rpallidum_xyy)/sigma_Rpallidum_xyy 
+
+# pdf(file = "/Users/gumae2/Documents/Humouse_paper/Figures/roi_plots/XYY_M_Rpallidum.pdf",   # The directory you want to save the file in
+#     width = 4, 
+#     height = 3)
+R_pallidum_XYY_M <- ggplot(df_zscore_LR_XYY, aes(x = shorthand, y =`right Pallidum, dorsal region`, group=shorthand, colour=shorthand, fill=shorthand)) +
+  geom_flat_violin(
+    position = position_nudge(x = .1, y = 0), alpha =.4,adjust =0.8)+
+  geom_boxplot(width = .12, outlier.shape = NA,alpha = .4) +
+  ## add justified jitter from the {gghalves} package
+  gghalves::geom_half_point(side = "l",range_scale = .4,alpha = .4) +
+  #Adjust theme
+  scale_fill_manual(values=c("#BC6E52", "#6e52bc"))+#"#52BCA3"
+  scale_color_manual(values = c("#BC6E52", "#6e52bc"))+
+   theme_classic()+
+  labs(y="Right Pallidum Volume",x=NULL,
+    fill="shorthand")+  theme(text = element_text(size = 10))+ylim(-4, 4)+
+  # scale_y_continuous(
+  #   sec.axis = sec_axis(name=expression(Right ~ Pallidum ~ Volume~ (mm^3)), ~ (. * sigma_Rpallidum_xyy) + mu_Rpallidum_xyy), 
+  #   name="Right Pallidum Volume", limits=c(-4,4)) +
+  theme(legend.position="none")+
+coord_cartesian(xlim = c(1.2, NA), clip = "off")
+R_pallidum_XYY_M 
+```
+
+## Right CA1 (98.7%)
+### XXY mouse
+```{r}
+mu_RCA1_xxy<- mean(dfVols_LR_XXY$`right Field CA1, stratum oriens`)
+sigma_RCA1_xxy <- sd(dfVols_LR_XXY$`right Field CA1, stratum oriens`)
+dfVols_LR_XXY$zscored_RCA1_volume <- (dfVols_LR_XXY$`right Field CA1, stratum oriens` - mu_RCA1_xxy)/sigma_RCA1_xxy 
+
+# pdf(file = "/Users/gumae2/Documents/Humouse_paper/Figures/roi_plots/XXY_M_RCA1.pdf",   # The directory you want to save the file in
+#     width = 4, 
+#     height = 3)
+R_CA1_XXY_M <- ggplot(df_zscore_LR_XXY, aes(x = shorthand, y = `right Field CA1, stratum oriens`, group=shorthand, colour=shorthand, fill=shorthand)) + 
+geom_flat_violin(
+    position = position_nudge(x = .1, y = 0), alpha =.4,adjust =0.8)+
+  geom_boxplot(width = .1, outlier.shape = NA,alpha = .5) +
+  ## add justified jitter from the {gghalves} package
+  gghalves::geom_half_point(side = "l",range_scale = .4,alpha = .3) +
+  #Adjust theme
+  scale_fill_manual(values=c("#BC6E52", "#52BCA3"))+ 
+  scale_color_manual(values = c("#BC6E52", "#52BCA3"))+
+  theme_classic()+
+  labs(y="Right CA1 Volume",x=NULL,
+    fill="shorthand")+  theme(text = element_text(size = 10))+ylim(-4, 4)+
+  # scale_y_continuous(
+  #   sec.axis = sec_axis(name=expression(Right ~ CA1 ~ Volume~ (mm^3)), ~ (. * sigma_RCA1_xxy) + mu_RCA1_xxy), 
+  #   name="Right CA1 Volume", limits=c(-4,4)) +
+  theme(legend.position="none")+
+coord_cartesian(xlim = c(1.2, NA), clip = "off")
+R_CA1_XXY_M 
+```
+### XYY mouse
+```{r}
+## zscore total tissue volume
+mu_RCA1_xyy<- mean(dfVols_LR_XYY$`right Field CA1, stratum oriens`)
+sigma_RCA1_xyy <- sd(dfVols_LR_XYY$`right Field CA1, stratum oriens`)
+dfVols_LR_XYY$zscored_RCA1_volume <- (dfVols_LR_XYY$`right Field CA1, stratum oriens` - mu_RCA1_xyy)/sigma_RCA1_xyy 
+
+# pdf(file = "/Users/gumae2/Documents/Humouse_paper/Figures/roi_plots/XYY_M_Rpallidum.pdf",   # The directory you want to save the file in
+#     width = 4, 
+#     height = 3)
+R_CA1_XYY_M <- ggplot(df_zscore_LR_XYY, aes(x = shorthand, y =`right Field CA1, stratum oriens`, group=shorthand, colour=shorthand, fill=shorthand)) +
+  geom_flat_violin(
+    position = position_nudge(x = .1, y = 0), alpha =.4,adjust =0.8)+
+  geom_boxplot(width = .12, outlier.shape = NA,alpha = .4) +
+  ## add justified jitter from the {gghalves} package
+  gghalves::geom_half_point(side = "l",range_scale = .4,alpha = .4) +
+  #Adjust theme
+  scale_fill_manual(values=c("#BC6E52", "#6e52bc"))+#"#52BCA3"
+  scale_color_manual(values = c("#BC6E52", "#6e52bc"))+
+   theme_classic()+
+  labs(y="Right CA1 Volume",x=NULL,
+    fill="shorthand")+  theme(text = element_text(size = 10))+ylim(-4, 4)+
+  # scale_y_continuous(
+  #   sec.axis = sec_axis(name=expression(Right ~ CA1 ~ Volume~ (mm^3)), ~ (. * sigma_RCA1_xyy) + mu_RCA1_xyy), 
+  #   name="Right CA1 Volume", limits=c(-4,4)) +
+  theme(legend.position="none")+
+coord_cartesian(xlim = c(1.2, NA), clip = "off")
+R_CA1_XYY_M 
+```
+
+
+# Negative congruence mouse
+
+##Right cingulate cortex (29c;  100.0%)
+### XXY mouse
+```{r}
+mu_RACC_xxy<- mean(dfVols_LR_XXY$`right Cingulate cortex: area 29c`)
+sigma_RACC_xxy <- sd(dfVols_LR_XXY$`right Cingulate cortex: area 29c`)
+dfVols_LR_XXY$zscored_RACC_volume <- (dfVols_LR_XXY$`right Cingulate cortex: area 29c` - mu_RACC_xxy)/sigma_RACC_xxy 
+
+# pdf(file = "/Users/gumae2/Documents/Humouse_paper/Figures/roi_plots/XXY_M_RACC.pdf",   # The directory you want to save the file in
+#     width = 4, 
+#     height = 3)
+R_ACC_XXY_M <- ggplot(df_zscore_LR_XXY, aes(x = shorthand, y = `right Cingulate cortex: area 29c`, group=shorthand, colour=shorthand, fill=shorthand)) + 
+geom_flat_violin(
+    position = position_nudge(x = .1, y = 0), alpha =.4,adjust =0.8)+
+  geom_boxplot(width = .1, outlier.shape = NA,alpha = .5) +
+  ## add justified jitter from the {gghalves} package
+  gghalves::geom_half_point(side = "l",range_scale = .4,alpha = .3) +
+  #Adjust theme
+  scale_fill_manual(values=c("#BC6E52", "#52BCA3"))+ 
+  scale_color_manual(values = c("#BC6E52", "#52BCA3"))+
+  theme_classic()+
+  labs(y="Right Cingulate Cortex Volume",x=NULL,
+    fill="shorthand")+  theme(text = element_text(size = 10))+ylim(-4, 4)+
+  # scale_y_continuous(
+  #   sec.axis = sec_axis(name=expression(Right ~ Cingulate ~ Cortex ~ Volume~ (mm^3)), ~ (. * sigma_RACC_xxy) + mu_RACC_xxy), 
+  #   name="Right Cingulate Cortex Volume", limits=c(-4,4)) +
+  theme(legend.position="none")+
+coord_cartesian(xlim = c(1.2, NA), clip = "off")
+R_ACC_XXY_M 
+```
+### XYY mouse
+```{r}
+## zscore total tissue volume
+mu_RACC_xyy<- mean(dfVols_LR_XYY$`right Cingulate cortex: area 29c`)
+sigma_RACC_xyy <- sd(dfVols_LR_XYY$`right Cingulate cortex: area 29c`)
+dfVols_LR_XYY$zscored_RACC_volume <- (dfVols_LR_XYY$`right Cingulate cortex: area 29c` - mu_RACC_xyy)/sigma_RACC_xyy 
+
+# pdf(file = "/Users/gumae2/Documents/Humouse_paper/Figures/roi_plots/XYY_M_RACC.pdf",   # The directory you want to save the file in
+#     width = 4, 
+#     height = 3)
+R_ACC_XYY_M <- ggplot(df_zscore_LR_XYY, aes(x = shorthand, y =`right Cingulate cortex: area 29c`, group=shorthand, colour=shorthand, fill=shorthand)) +
+  geom_flat_violin(
+    position = position_nudge(x = .1, y = 0), alpha =.4,adjust =0.8)+
+  geom_boxplot(width = .12, outlier.shape = NA,alpha = .4) +
+  ## add justified jitter from the {gghalves} package
+  gghalves::geom_half_point(side = "l",range_scale = .4,alpha = .4) +
+  #Adjust theme
+  scale_fill_manual(values=c("#BC6E52", "#6e52bc"))+#"#52BCA3"
+  scale_color_manual(values = c("#BC6E52", "#6e52bc"))+
+   theme_classic()+
+  labs(y="Right Cingulate Cortex Volume",x=NULL,
+    fill="shorthand")+  theme(text = element_text(size = 10))+ylim(-4, 4)+
+  # scale_y_continuous(
+  #   sec.axis = sec_axis(name=expression(Right ~ Cingulate ~ Cortex ~ Volume~ (mm^3)), ~ (. * sigma_RACC_xyy) + mu_RACC_xyy), 
+  #   name="Right Cingulate Cortex Volume", limits=c(-4,4)) +
+  theme(legend.position="none")+
+coord_cartesian(xlim = c(1.2, NA), clip = "off")
+R_ACC_XYY_M 
+```
+
+##Right Paramedian lobule of cerebellum (R: 96.0%)
+### XXY mouse
+```{r}
+mu_Rcerebellum_xxy<- mean(dfVols_LR_XXY$`right Paramedian lobule`)
+sigma_Rcerebellum_xxy <- sd(dfVols_LR_XXY$`right Paramedian lobule`)
+dfVols_LR_XXY$zscored_Rcerebellum_volume <- (dfVols_LR_XXY$`right Paramedian lobule` - mu_Rcerebellum_xxy)/sigma_Rcerebellum_xxy 
+
+# pdf(file = "/Users/gumae2/Documents/Humouse_paper/Figures/roi_plots/XXY_M_Rcerebellum.pdf",   # The directory you want to save the file in
+#     width = 4, 
+#     height = 3)
+R_cerebellum_XXY_M <- ggplot(df_zscore_LR_XXY, aes(x = shorthand, y = `right Paramedian lobule`, group=shorthand, colour=shorthand, fill=shorthand)) + 
+geom_flat_violin(
+    position = position_nudge(x = .1, y = 0), alpha =.4,adjust =0.8)+
+  geom_boxplot(width = .1, outlier.shape = NA,alpha = .5) +
+  ## add justified jitter from the {gghalves} package
+  gghalves::geom_half_point(side = "l",range_scale = .4,alpha = .3) +
+  #Adjust theme
+  scale_fill_manual(values=c("#BC6E52", "#52BCA3"))+ 
+  scale_color_manual(values = c("#BC6E52", "#52BCA3"))+
+  theme_classic()+
+  labs(y="Right Paramedian Lobule Volume",x=NULL,
+    fill="shorthand")+  theme(text = element_text(size = 10))+ylim(-4, 4)+
+  # scale_y_continuous(
+  #   sec.axis = sec_axis(name=expression(Right ~ Paramedian ~ Lobule ~ Volume~ (mm^3)), ~ (. * sigma_Rcerebellum_xxy) + mu_Rcerebellum_xxy), 
+  #   name="Right Paramedian Lobule Volume", limits=c(-4,4)) +
+  theme(legend.position="none")+
+coord_cartesian(xlim = c(1.2, NA), clip = "off")
+R_cerebellum_XXY_M 
+```
+### XYY mouse
+```{r}
+## zscore total tissue volume
+mu_Rcerebellum_xyy<- mean(dfVols_LR_XYY$`right Paramedian lobule`)
+sigma_Rcerebellum_xyy <- sd(dfVols_LR_XYY$`right Paramedian lobule`)
+dfVols_LR_XYY$zscored_Rcerebellum_volume <- (dfVols_LR_XYY$`right Paramedian lobule` - mu_Rcerebellum_xyy)/sigma_Rcerebellum_xyy 
+
+# pdf(file = "/Users/gumae2/Documents/Humouse_paper/Figures/roi_plots/XYY_M_Rcerebellum.pdf",   # The directory you want to save the file in
+#     width = 4, 
+#     height = 3)
+R_cerebellum_XYY_M <- ggplot(df_zscore_LR_XYY, aes(x = shorthand, y =`right Paramedian lobule`, group=shorthand, colour=shorthand, fill=shorthand)) +
+  geom_flat_violin(
+    position = position_nudge(x = .1, y = 0), alpha =.4,adjust =0.8)+
+  geom_boxplot(width = .12, outlier.shape = NA,alpha = .4) +
+  ## add justified jitter from the {gghalves} package
+  gghalves::geom_half_point(side = "l",range_scale = .4,alpha = .4) +
+  #Adjust theme
+  scale_fill_manual(values=c("#BC6E52", "#6e52bc"))+#"#52BCA3"
+  scale_color_manual(values = c("#BC6E52", "#6e52bc"))+
+    theme_classic()+
+  labs(y="Right Paramedian Lobule Volume",x=NULL,
+    fill="shorthand")+  theme(text = element_text(size = 10))+ylim(-4, 4)+
+  # scale_y_continuous(
+  #   sec.axis = sec_axis(name=expression(Right ~ Paramedian ~ Lobule ~ Volume~ (mm^3)), ~ (. * sigma_Rcerebellum_xyy) + mu_Rcerebellum_xyy), 
+  #   name="Right Paramedian Lobule Volume", limits=c(-4,4)) +
+  theme(legend.position="none")+
+coord_cartesian(xlim = c(1.2, NA), clip = "off")
+R_cerebellum_XYY_M  
+```
+
+##Left Paramedian lobule of cerebellum (L: 99.1%)
+### XXY mouse
+```{r}
+mu_Lcerebellum_xxy<- mean(dfVols_LR_XXY$`left Paramedian lobule`)
+sigma_Lcerebellum_xxy <- sd(dfVols_LR_XXY$`left Paramedian lobule`)
+dfVols_LR_XXY$zscored_Rcerebellum_volume <- (dfVols_LR_XXY$`left Paramedian lobule` - mu_Lcerebellum_xxy)/sigma_Lcerebellum_xxy 
+
+# pdf(file = "/Users/gumae2/Documents/Humouse_paper/Figures/roi_plots/XXY_M_Lcerebellum.pdf",   # The directory you want to save the file in
+#     width = 4, 
+#     height = 3)
+L_cerebellum_XXY_M <- ggplot(df_zscore_LR_XXY, aes(x = shorthand, y = `left Paramedian lobule`, group=shorthand, colour=shorthand, fill=shorthand)) + 
+geom_flat_violin(
+    position = position_nudge(x = .1, y = 0), alpha =.4,adjust =0.8)+
+  geom_boxplot(width = .1, outlier.shape = NA,alpha = .5) +
+  ## add justified jitter from the {gghalves} package
+  gghalves::geom_half_point(side = "l",range_scale = .4,alpha = .3) +
+  #Adjust theme
+  scale_fill_manual(values=c("#BC6E52", "#52BCA3"))+ 
+  scale_color_manual(values = c("#BC6E52", "#52BCA3"))+
+  theme_classic()+
+  labs(y="Left Paramedian Lobule Volume",x=NULL,
+    fill="shorthand")+  theme(text = element_text(size = 10))+ylim(-4, 4)+
+  # scale_y_continuous(
+  #   sec.axis = sec_axis(name=expression(Left ~ Paramedian ~ Lobule ~ Volume~ (mm^3)), ~ (. * sigma_Lcerebellum_xxy) + mu_Lcerebellum_xxy), 
+  #   name="Left Paramedian Lobule Volume", limits=c(-4,4)) +
+  theme(legend.position="none")+
+coord_cartesian(xlim = c(1.2, NA), clip = "off")
+L_cerebellum_XXY_M 
+```
+### XYY mouse
+```{r}
+## zscore total tissue volume
+mu_Lcerebellum_xyy<- mean(dfVols_LR_XYY$`left Paramedian lobule`)
+sigma_Lcerebellum_xyy <- sd(dfVols_LR_XYY$`left Paramedian lobule`)
+dfVols_LR_XYY$zscored_Lcerebellum_volume <- (dfVols_LR_XYY$`left Paramedian lobule` - mu_Lcerebellum_xyy)/sigma_Lcerebellum_xyy 
+
+# pdf(file = "/Users/gumae2/Documents/Humouse_paper/Figures/roi_plots/XYY_M_Lcerebellum.pdf",   # The directory you want to save the file in
+#     width = 4, 
+#     height = 3)
+L_cerebellum_XYY_M <- ggplot(df_zscore_LR_XYY, aes(x = shorthand, y =`left Paramedian lobule`, group=shorthand, colour=shorthand, fill=shorthand)) +
+  geom_flat_violin(
+    position = position_nudge(x = .1, y = 0), alpha =.4,adjust =0.8)+
+  geom_boxplot(width = .12, outlier.shape = NA,alpha = .4) +
+  ## add justified jitter from the {gghalves} package
+  gghalves::geom_half_point(side = "l",range_scale = .4,alpha = .4) +
+  #Adjust theme
+  scale_fill_manual(values=c("#BC6E52", "#6e52bc"))+#"#52BCA3"
+  scale_color_manual(values = c("#BC6E52", "#6e52bc"))+
+    theme_classic()+
+  labs(y="Left Paramedian Lobule Volume",x=NULL,
+    fill="shorthand")+  theme(text = element_text(size = 10))+ylim(-4, 4)+
+  # scale_y_continuous(
+  #   sec.axis = sec_axis(name=expression(Left ~ Paramedian ~ Lobule ~ Volume~ (mm^3)), ~ (. * sigma_Lcerebellum_xyy) + mu_Lcerebellum_xyy), 
+  #   name="Left Paramedian Lobule Volume", limits=c(-4,4)) +
+  theme(legend.position="none")+
+coord_cartesian(xlim = c(1.2, NA), clip = "off")
+L_cerebellum_XYY_M  
+```
+##Right primary somatosensory cortex, shoulder region (99.4%)
+
+### XXY mouse
+```{r}
+mu_Rsomatosensory_xxy<- mean(dfVols_LR_XXY$`right Primary somatosensory cortex: shoulder region`)
+sigma_Rsomatosensory_xxy <- sd(dfVols_LR_XXY$`right Primary somatosensory cortex: shoulder region`)
+dfVols_LR_XXY$zscored_Rsomatosensory_volume <- (dfVols_LR_XXY$`right Primary somatosensory cortex: shoulder region` - mu_Rsomatosensory_xxy)/sigma_Rsomatosensory_xxy 
+
+# pdf(file = "/Users/gumae2/Documents/Humouse_paper/Figures/roi_plots/XXY_M_Rsomatosensory.pdf",   # The directory you want to save the file in
+#     width = 4, 
+#     height = 3)
+R_somatosensory_XXY_M <- ggplot(df_zscore_LR_XXY, aes(x = shorthand, y = `right Primary somatosensory cortex: shoulder region`, group=shorthand, colour=shorthand, fill=shorthand)) + 
+geom_flat_violin(
+    position = position_nudge(x = .1, y = 0), alpha =.4,adjust =0.8)+
+  geom_boxplot(width = .1, outlier.shape = NA,alpha = .5) +
+  ## add justified jitter from the {gghalves} package
+  gghalves::geom_half_point(side = "l",range_scale = .4,alpha = .3) +
+  #Adjust theme
+  scale_fill_manual(values=c("#BC6E52", "#52BCA3"))+ 
+  scale_color_manual(values = c("#BC6E52", "#52BCA3"))+
+  theme_classic()+
+  labs(y="Right Primary SMCTX Volume",x=NULL,
+    fill="shorthand")+  theme(text = element_text(size = 10))+ylim(-4, 4)+
+  # scale_y_continuous(
+  #   sec.axis = sec_axis(name=expression(Right ~ Primary ~ SMCTX ~ Volume~ (mm^3)), ~ (. * sigma_Rsomatosensory_xxy) + mu_Rsomatosensory_xxy), 
+  #   name="Right Primary SMCTX Volume", limits=c(-4,4)) +
+  theme(legend.position="none")+
+coord_cartesian(xlim = c(1.2, NA), clip = "off")
+R_somatosensory_XXY_M 
+```
+### XYY mouse
+```{r}
+## zscore total tissue volume
+mu_Rsomatosensory_xyy<- mean(dfVols_LR_XYY$`right Primary somatosensory cortex: shoulder region`)
+sigma_Rsomatosensory_xyy <- sd(dfVols_LR_XYY$`right Primary somatosensory cortex: shoulder region`)
+dfVols_LR_XYY$zscored_Rsomatosensory_volume <- (dfVols_LR_XYY$`right Primary somatosensory cortex: shoulder region` - mu_Rsomatosensory_xyy)/sigma_Rsomatosensory_xyy 
+
+# pdf(file = "/Users/gumae2/Documents/Humouse_paper/Figures/roi_plots/XYY_M_Rsomatosensory.pdf",   # The directory you want to save the file in
+#     width = 4, 
+#     height = 3)
+R_somatosensory_XYY_M <- ggplot(df_zscore_LR_XYY, aes(x = shorthand, y =`right Primary somatosensory cortex: shoulder region`, group=shorthand, colour=shorthand, fill=shorthand)) +
+  geom_flat_violin(
+    position = position_nudge(x = .1, y = 0), alpha =.4,adjust =0.8)+
+  geom_boxplot(width = .12, outlier.shape = NA,alpha = .4) +
+  ## add justified jitter from the {gghalves} package
+  gghalves::geom_half_point(side = "l",range_scale = .4,alpha = .4) +
+  #Adjust theme
+  scale_fill_manual(values=c("#BC6E52", "#6e52bc"))+#"#52BCA3"
+  scale_color_manual(values = c("#BC6E52", "#6e52bc"))+
+    theme_classic()+
+  labs(y="Right Primary SMCTX Volume",x=NULL,
+    fill="shorthand")+  theme(text = element_text(size = 10))+ylim(-4, 4)+
+  # scale_y_continuous(
+  #   sec.axis = sec_axis(name=expression(Right ~ Primary ~ SMCTX ~ Volume~ (mm^3)), ~ (. * sigma_Rsomatosensory_xyy) + mu_Rsomatosensory_xyy), 
+  #   name="Right Primary SMCTX Volume", limits=c(-4,4)) +
+  theme(legend.position="none")+
+coord_cartesian(xlim = c(1.2, NA), clip = "off")
+R_somatosensory_XYY_M  
+```
+
+
+##Right orbital area (ventrolateral part; 97.9%)
+
+### XXY mouse
+```{r}
+mu_Rofc_xxy<- mean(dfVols_LR_XXY$`right Orbital area, ventrolateral part`)
+sigma_Rofc_xxy <- sd(dfVols_LR_XXY$`right Orbital area, ventrolateral part`)
+dfVols_LR_XXY$zscored_Rofc_volume <- (dfVols_LR_XXY$`right Orbital area, ventrolateral part` - mu_Rofc_xxy)/sigma_Rofc_xxy 
+
+# pdf(file = "/Users/gumae2/Documents/Humouse_paper/Figures/roi_plots/XXY_M_Rofc.pdf",   # The directory you want to save the file in
+#     width = 4, 
+#     height = 3)
+R_ofc_XXY_M <- ggplot(df_zscore_LR_XXY, aes(x = shorthand, y = `right Orbital area, ventrolateral part`, group=shorthand, colour=shorthand, fill=shorthand)) + 
+geom_flat_violin(
+    position = position_nudge(x = .1, y = 0), alpha =.4,adjust =0.8)+
+  geom_boxplot(width = .1, outlier.shape = NA,alpha = .5) +
+  ## add justified jitter from the {gghalves} package
+  gghalves::geom_half_point(side = "l",range_scale = .4,alpha = .3) +
+  #Adjust theme
+  scale_fill_manual(values=c("#BC6E52", "#52BCA3"))+ 
+  scale_color_manual(values = c("#BC6E52", "#52BCA3"))+
+  theme_classic()+
+  labs(y="Right VL Orbital Cortex Volume",x=NULL,
+    fill="shorthand")+  theme(text = element_text(size = 10))+ylim(-4, 4)+
+  # scale_y_continuous(
+  #   sec.axis = sec_axis(name=expression(Right ~ Ventrolateral ~Orbital ~ Cortex ~ Volume~ (mm^3)), ~ (. * sigma_Rofc_xxy) + mu_Rofc_xxy), 
+  #   name="Right VL Orbital Cortex Volume", limits=c(-4,4)) +
+  theme(legend.position="none")+
+coord_cartesian(xlim = c(1.2, NA), clip = "off")
+R_ofc_XXY_M 
+```
+### XYY mouse
+```{r}
+## zscore total tissue volume
+mu_Rofc_xyy<- mean(dfVols_LR_XYY$`right Orbital area, ventrolateral part`)
+sigma_Rofc_xyy <- sd(dfVols_LR_XYY$`right Orbital area, ventrolateral part`)
+dfVols_LR_XYY$zscored_Rofc_volume <- (dfVols_LR_XYY$`right Orbital area, ventrolateral part` - mu_Rofc_xyy)/sigma_Rofc_xyy 
+
+# pdf(file = "/Users/gumae2/Documents/Humouse_paper/Figures/roi_plots/XYY_M_Rofc.pdf",   # The directory you want to save the file in
+#     width = 4, 
+#     height = 3)
+R_ofc_XYY_M <- ggplot(df_zscore_LR_XYY, aes(x = shorthand, y =`right Orbital area, ventrolateral part`, group=shorthand, colour=shorthand, fill=shorthand)) +
+  geom_flat_violin(
+    position = position_nudge(x = .1, y = 0), alpha =.4,adjust =0.8)+
+  geom_boxplot(width = .12, outlier.shape = NA,alpha = .4) +
+  ## add justified jitter from the {gghalves} package
+  gghalves::geom_half_point(side = "l",range_scale = .4,alpha = .4) +
+  #Adjust theme
+  scale_fill_manual(values=c("#BC6E52", "#6e52bc"))+#"#52BCA3"
+  scale_color_manual(values = c("#BC6E52", "#6e52bc"))+
+     theme_classic()+
+  labs(y="Right VL Orbital Cortex Volume",x=NULL,
+    fill="shorthand")+  theme(text = element_text(size = 10))+ylim(-4, 4)+
+  # scale_y_continuous(
+  #   sec.axis = sec_axis(name=expression(Right ~ Ventrolateral ~Orbital ~ Cortex ~ Volume~ (mm^3)), ~ (. * sigma_Rofc_xyy) + mu_Rofc_xyy), 
+  #   name="Right VL Orbital Cortex Volume", limits=c(-4,4)) +
+  theme(legend.position="none")+
+coord_cartesian(xlim = c(1.2, NA), clip = "off")
+R_ofc_XYY_M  
+```
+
+## Main olfactory bulb, outer plexiform layer (L & R: 98.7%)
+
+### XXY mouse
+```{r}
+mu_LOB_xxy<- mean(dfVols_LR_XXY$`left Main olfactory bulb, outer plexiform layer`)
+sigma_LOB_xxy <- sd(dfVols_LR_XXY$`left Main olfactory bulb, outer plexiform layer`)
+dfVols_LR_XXY$zscored_LOB_volume <- (dfVols_LR_XXY$`left Main olfactory bulb, outer plexiform layer` - mu_LOB_xxy)/sigma_LOB_xxy 
+
+# pdf(file = "/Users/gumae2/Documents/Humouse_paper/Figures/roi_plots/XXY_M_Loflactorybulb.pdf",   # The directory you want to save the file in
+#     width = 4, 
+#     height = 3)
+L_OB_XXY_M <- ggplot(df_zscore_LR_XXY, aes(x = shorthand, y = `left Main olfactory bulb, outer plexiform layer`, group=shorthand, colour=shorthand, fill=shorthand)) + 
+geom_flat_violin(
+    position = position_nudge(x = .1, y = 0), alpha =.4,adjust =0.8)+
+  geom_boxplot(width = .1, outlier.shape = NA,alpha = .5) +
+  ## add justified jitter from the {gghalves} package
+  gghalves::geom_half_point(side = "l",range_scale = .4,alpha = .3) +
+  #Adjust theme
+  scale_fill_manual(values=c("#BC6E52", "#52BCA3"))+ 
+  scale_color_manual(values = c("#BC6E52", "#52BCA3"))+
+  theme_classic()+
+  labs(y="Left Olfactory Bulb Volume",x=NULL,
+    fill="shorthand")+  theme(text = element_text(size = 10))+ylim(-4, 4)+
+  # scale_y_continuous(
+  #   sec.axis = sec_axis(name=expression(Left ~ Main ~ Olfactory ~ Bulb ~ Volume~ (mm^3)), ~ (. * sigma_LOB_xxy) + mu_LOB_xxy), 
+  #   name="Left Olfactory Bulb Volume", limits=c(-4,4)) +
+  theme(legend.position="none")+
+coord_cartesian(xlim = c(1.2, NA), clip = "off")
+L_OB_XXY_M 
+```
+### XYY mouse
+```{r}
+## zscore total tissue volume
+mu_LOB_xyy<- mean(dfVols_LR_XYY$`left Main olfactory bulb, outer plexiform layer`)
+sigma_LOB_xyy <- sd(dfVols_LR_XYY$`left Main olfactory bulb, outer plexiform layer`)
+dfVols_LR_XYY$zscored_LOB_volume <- (dfVols_LR_XYY$`left Main olfactory bulb, outer plexiform layer` - mu_LOB_xyy)/sigma_LOB_xyy 
+
+# pdf(file = "/Users/gumae2/Documents/Humouse_paper/Figures/roi_plots/XYY_Loflactorybulb.pdf",   # The directory you want to save the file in
+#     width = 4, 
+#     height = 3)
+L_OB_XYY_M <- ggplot(df_zscore_LR_XYY, aes(x = shorthand, y =`left Main olfactory bulb, outer plexiform layer`, group=shorthand, colour=shorthand, fill=shorthand)) +
+  geom_flat_violin(
+    position = position_nudge(x = .1, y = 0), alpha =.4,adjust =0.8)+
+  geom_boxplot(width = .12, outlier.shape = NA,alpha = .4) +
+  ## add justified jitter from the {gghalves} package
+  gghalves::geom_half_point(side = "l",range_scale = .4,alpha = .4) +
+  #Adjust theme
+  scale_fill_manual(values=c("#BC6E52", "#6e52bc"))+#"#52BCA3"
+  scale_color_manual(values = c("#BC6E52", "#6e52bc"))+
+       theme_classic()+
+  labs(y="Left Olfactory Bulb Volume",x=NULL,
+    fill="shorthand")+  theme(text = element_text(size = 10))+ylim(-4, 4)+
+  # scale_y_continuous(
+  #   sec.axis = sec_axis(name=expression(Left ~ Main ~ Olfactory ~ Bulb ~ Volume~ (mm^3)), ~ (. * sigma_LOB_xyy) + mu_LOB_xyy), 
+  #   name="Left Olfactory Bulb Volume", limits=c(-4,4)) +
+  theme(legend.position="none")+
+coord_cartesian(xlim = c(1.2, NA), clip = "off")
+L_OB_XYY_M  
+```
+
+### Legend plot
+
+```{r}
+dfVols_LR$shorthand1 <- recode_factor(dat_LR$shorthand, XY_M = "XY", XXY_M="XXY", XYY_M="XYY")
+dfVols_LR1  <- dfVols_LR %>%
+  filter(shorthand1 %in% c("XY", "XXY", "XYY")) %>% 
+  mutate(shorthand1 = factor(shorthand1, levels = c("XY", "XXY", "XYY")))
+
+mu_ttv<- mean(dfVols_LR1$total_tissue_volume)
+sigma_ttv <- sd(dfVols_LR1$total_tissue_volume)
+dfVols_LR1$zscored_ttv <- (dfVols_LR1$total_tissue_volume - mu_ttv)/sigma_ttv
+
+legend_plot <- ggplot(dfVols_LR1, aes(x = shorthand1, y = zscored_ttv, group=shorthand1, colour=shorthand1, fill=shorthand1)) +
+  geom_flat_violin(
+    position = position_nudge(x = .1, y = 0), alpha =.4,adjust =0.8)+
+  geom_boxplot(width = .12, outlier.shape = NA,alpha = .4) +
+  gghalves::geom_half_point(side = "l",range_scale = .4,alpha = .4) +
+  scale_fill_manual(values=c("#BC6E52", "#52BCA3", "#6e52bc"))+#"#52BCA3"
+  scale_color_manual(values = c("#BC6E52", "#52BCA3", "#6e52bc"))+
+  theme_classic()+
+   labs(y="Tissue Volume",x=NULL,
+    fill="shorthand1")+  
+  theme(text = element_text(size = 10),legend.title= element_blank())+ylim(-4, 4)+
+coord_cartesian(xlim = c(1.2, NA), clip = "off")
+legend_plot
+```
+
+
+
+### Merged plot human
+```{r}
+common_legend <- get_legend(legend_plot)
+Human_congruence1 <- ggarrange(
+          L_ACCp24pr_XXY_H, L_ACCp24pr_XYY_H, 
+          R_R2_XXY_H, R_R2_XYY_H,
+          L_7m_XXY_H, L_7m_XYY_H,
+          L_V1_XXY_H, L_V1_XYY_H,
+          R_cerebellum_XXY_H, R_cerebellum_XYY_H,
+          R_pallidum_XXY_H, R_pallidum_XYY_H,
+          L_pOFC_XXY_H,L_pOFC_XYY_H,
+          L_insula_XXY_H, L_insula_XYY_H,
+             labels = c("F.", "", 
+                        "G.", "",
+                        "H.","", 
+                        "I.", "",
+                        "J.", "", 
+                        "K.", "",
+                        "L.", "",
+                        "M.", ""),
+          ncol = 2,
+          nrow=8)
+
+pdf(file = "/Users/gumae2/Documents/Humouse_paper/Figures/roi_plots/Human_congruence_plots_singleyaxis.pdf",
+     width = 6,
+     height = 22)
+ggarrange(Human_congruence1, common_legend, widths = c(0.92, 0.08))
+```
+
+
+### Merged plot mouse
+```{r}
+common_legend <- get_legend(legend_plot)
+Mouse_congruence1 <- ggarrange(
+          L_parietal_XXY_M, L_parietal_XYY_M, 
+          R_pallidum_XXY_M, R_pallidum_XYY_M,
+          R_CA1_XXY_M, R_CA1_XYY_M,
+          R_ACC_XXY_M, R_ACC_XYY_M,
+          R_cerebellum_XXY_M, R_cerebellum_XYY_M,
+          R_somatosensory_XXY_M, R_somatosensory_XYY_M,
+          R_ofc_XXY_M, R_ofc_XXY_M,
+          L_OB_XXY_M, L_OB_XXY_M,
+             labels = c("N.", "", 
+                        "O.", "",
+                        "P.","", 
+                        "Q.", "",
+                        "T.", "", 
+                        "S.", "",
+                        "T.", "",
+                        "U.", ""),
+          ncol = 2,
+          nrow=8)
+
+pdf(file = "/Users/gumae2/Documents/Humouse_paper/Figures/roi_plots/Mouse_congruence_plots_singleyaxis.pdf",
+ width = 6,
+     height = 22)
+ggarrange(Mouse_congruence1, common_legend, widths = c(0.92, 0.08))
+```
+
+### Refined Merged plot human
+```{r}
+common_legend <- get_legend(legend_plot)
+Human_congruence2 <- ggarrange(
+          L_ACCp24pr_XXY_H, L_ACCp24pr_XYY_H, 
+          R_R2_XXY_H, R_R2_XYY_H,
+          L_7m_XXY_H, L_7m_XYY_H,
+          R_cerebellum_XXY_H, R_cerebellum_XYY_H,
+          R_pallidum_XXY_H, R_pallidum_XYY_H,
+          L_pOFC_XXY_H,L_pOFC_XYY_H,
+             labels = c("A.", "", 
+                        "B.", "",
+                        "C.","", 
+                        "D.", "",
+                        "E.", "", 
+                        "F.", ""),
+          ncol = 2,
+          nrow=6)
+
+pdf(file = "/Users/gumae2/Documents/Humouse_paper/Figures/roi_plots/Human_congruence_plots_refined_singleyaxis.pdf",
+   width = 6,
+     height = 16)
+ggarrange(Human_congruence2, common_legend, widths = c(0.92, 0.08))
+```
+
+
+### Refined Merged plot mouse
+```{r}
+common_legend <- get_legend(legend_plot)
+Mouse_congruence2 <- ggarrange(
+          R_ACC_XXY_M, R_ACC_XYY_M,
+          R_somatosensory_XXY_M, R_somatosensory_XYY_M,
+          L_parietal_XXY_M, L_parietal_XYY_M, 
+          R_cerebellum_XXY_M, R_cerebellum_XYY_M,
+          R_pallidum_XXY_M, R_pallidum_XYY_M,
+          R_ofc_XXY_M, R_ofc_XXY_M,
+             labels = c("K.", "", 
+                        "L.","", 
+                        "M.", "",
+                        "N.", "", 
+                        "O.", "",
+                        "P.", ""),
+          ncol = 2,
+          nrow=6)
+
+pdf(file = "/Users/gumae2/Documents/Humouse_paper/Figures/roi_plots/Mouse_congruence_plots_refined_singleyaxis.pdf",
+      width = 6,
+     height = 16)
+ggarrange(Mouse_congruence2, common_legend, widths = c(0.92, 0.08))
+```
+
+
+### Further refined Merged plot human
+```{r}
+common_legend <- get_legend(legend_plot)
+Human_congruence3 <- ggarrange(
+          L_7m_XXY_H, L_7m_XYY_H,
+          L_ACCp24pr_XXY_H, L_ACCp24pr_XYY_H, 
+          R_pallidum_XXY_H, R_pallidum_XYY_H,
+          R_cerebellum_XXY_H, R_cerebellum_XYY_H,
+             labels = c("E.", "", 
+                        "F.", "",
+                        "G.","", 
+                        "H.", ""),
+          ncol = 2,
+          nrow=4)
+
+pdf(file = "/Users/gumae2/Documents/Humouse_paper/Figures/roi_plots/Human_congruence_plots_refined_1_singleyaxis_new.pdf",
+   width = 6,
+     height = 9)
+ggarrange(Human_congruence3, common_legend, widths = c(0.92, 0.08))
+```
+
+
+### Refined Merged plot mouse
+```{r}
+common_legend <- get_legend(legend_plot)
+Mouse_congruence3 <- ggarrange(
+          L_parietal_XXY_M, L_parietal_XYY_M, 
+          R_pallidum_XXY_M, R_pallidum_XYY_M,
+          R_ACC_XXY_M, R_ACC_XYY_M,
+          R_cerebellum_XXY_M, R_cerebellum_XYY_M,
+          
+             labels = c("I.", "", 
+                        "J.","", 
+                        "K.", "",
+                        "L.", ""),
+          ncol = 2,
+          nrow=4)
+
+pdf(file = "/Users/gumae2/Documents/Humouse_paper/Figures/roi_plots/Mouse_congruence_plots_refined_1_singleyaxis_new.pdf",
+   width = 6,
+     height = 9)
+ggarrange(Mouse_congruence3, common_legend, widths = c(0.92, 0.08))
+```

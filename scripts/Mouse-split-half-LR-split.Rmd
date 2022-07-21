@@ -1,0 +1,779 @@
+---
+title: "Mouse-split-half-LR-split"
+author: "Elisa Guma"
+date: "4/12/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+```{r }
+library(tidyverse)
+library(data.tree)
+library(RMINC)
+library(magrittr)
+library(ggplot2)
+library(MRIcrotome)
+```
+
+#Description
+
+Since each mouse aneuploidy group in our mouse sample did not have their own independent control (as it does in the human sample), we performed  bootstrap resampling without replacement to generate two independent control groups as follows: we repeatedly split (n=1000) the XY control group (n=18) in half, sample A (n=9) and sample B (n=9), without replacement. Sample A was used to calculate z-scored brain volumes for the XXY mice, while sample B was used for the XYY_M mice. For each control-split, and across all brain regions, a linear model to assess for group effects, with correction for total brain volume. For each control split, the β1 was stored.
+
+Mouse model Sample A: ROI_volume ~ intercept + β1(Group XYY_M vs XY_SampleA)+ β2(Total Brain Volume) + Ɛ
+Mouse model Sample B: ROI_volume ~ intercept + β1(Group XYY_M vs XY_SampleB)+ β2(Total Brain Volume) + Ɛ
+
+The β1 value of each brain region for sample A was correlated to that of Sample B across every region in the brain, yielding a 1000 x 1000 correlation matrix for each of the control splits. Next, we identified which brain regions had either a consistently positive or a consistently negative β1 value across 95% of the splits (950/1000 splits) for both the XXY_M (with XY_M Sample A) and XYY_M (with XY_M Sample B) groups. Analysis were repeated without TTV correction. 
+
+```{r}
+pathHome <- "/Users/gumae2/Documents/Humouse/"
+demographics <- readRDS(str_c(pathHome, "input_data/", "gf2018noout.RDS"))
+treeVols_LR <- readRDS(str_c(pathHome, "input_data/", "SCT-vols-no-outliers.RDS"))
+
+source('/Users/gumae2/Documents/Humouse/input_data/tree_tools.R')
+```
+
+# Gonadal Males
+Calculate total tissue volume
+```{r}
+vols <- treeVols_LR$Get("volumes") %>% as_tibble
+dat <- vols %>%  cbind(demographics)
+
+demographics$shorthand <- recode_factor(demographics$shorthand, XYM = "XY_M", XXYM="XXY_M", XYYM="XYY_M")
+demographics$ventricle_volume <- vols$`ventricular systems`
+demographics$total_tissue_volume<- demographics$brainVolume - demographics$ventricle_volume
+```
+
+```{r}
+LR_tree_pruned <- Clone(treeVols_LR)
+nodes_to_cut <- c("ventricular systems", "fiber tracts") #remove ventricles and cranial nerves
+pruneAnatTree(LR_tree_pruned, nodes = nodes_to_cut, method = "AtNode")
+```
+
+## Select the rows from the demographics dataset that correspond to the groups of interest
+```{r}
+rows_just_xy <- which(demographics$shorthand == "XY_M")
+rows_XXY <- which(demographics$shorthand == "XXY_M")
+rows_XYY <- which(demographics$shorthand == "XYY_M")
+```
+## Assign the number of samples
+```{r}
+nsamples <- 1000
+```
+
+### Sample indices for half of the rows corresponding to UY-Sry
+```{r}
+#set.seed(42)
+listSampleIndices <- vector(mode = "list", length = nsamples)
+for(i in 1:nsamples){
+  listSampleIndices[[i]] = sample(x = 1:length(rows_just_xy), size = 0.5*length(rows_just_xy), replace = FALSE)
+}
+```
+
+#### Next we compute the split-half zscores in the tree
+```{r}
+#This is done at each node
+LR_tree_pruned$Do(function(node){
+    #For the given node, iterate over our permutations
+   #Attach metadata to the tree
+    node$demographics <- demographics
+    node$genotype <- demographics$genotype
+    node$brainVolume <- demographics$brainVolume
+    node$tissueVolume <- demographics$total_tissue_volume
+    node$shorthand <- demographics$shorthand
+    node$sex <- demographics$sex
+
+   #initialize vectors in which to store the betas from linear model
+    node$beta_A_m <- numeric(nsamples)
+    node$beta_B_m <- numeric(nsamples)
+    node$beta_A_m_noTBV <- numeric(nsamples)
+    node$beta_B_m_noTBV <- numeric(nsamples)
+    
+   #initialize vectors in which to store the sigma-betas from linear model
+    node$sigma_beta_A_m <- numeric(nsamples)
+    node$sigma_beta_B_m <- numeric(nsamples)
+    node$sigma_beta_A_m_noTBV <- numeric(nsamples)
+    node$sigma_beta_B_m_noTBV <- numeric(nsamples)
+  
+  for(i in 1:nsamples){
+    #Using the sampled indices, extract the sets of rows corresponding to XY entries    
+    rows_xy_sampleA <- rows_just_xy[listSampleIndices[[i]]] #sample A are the rows that are selected in the listSampleIndices above
+    rows_xy_sampleB <- rows_just_xy[-listSampleIndices[[i]]] #sample B are the remaining rows 
+
+    rows_XXYM <- which(demographics$shorthand == "XXY_M") #select the XXY row (redundant from above)
+    rows_XYYM <- which(demographics$shorthand == "XYY_M") #select the XYY rows 
+    
+    rows_sampleA<-c(rows_XXYM, rows_xy_sampleA)
+    rows_sampleB<-c(rows_XYYM, rows_xy_sampleB)
+ 
+    #Compute the zscores for all volumes and store them in the correct position in the node
+    #calculate the mean for XY sample A for each volume in the node
+    node$ctrl_mean_sampleA <- mean(node$volumes[rows_xy_sampleA]) 
+    node$ctrl_sd_sampleA <- sd(node$volumes[rows_xy_sampleA]) #same for the sd
+    node$zscores_sampleA <- (node$volumes - node$ctrl_mean_sampleA)/node$ctrl_sd_sampleA #zscore relative to XY sample A
+   #repeat for sample B
+    node$ctrl_mean_sampleB <- mean(node$volumes[rows_xy_sampleB])
+    node$ctrl_sd_sampleB <- sd(node$volumes[rows_xy_sampleB])
+    node$zscores_sampleB  <- (node$volumes - node$ctrl_mean_sampleB)/node$ctrl_sd_sampleB #zscore relative to XY sample B
+   
+   #calculate TBV
+   #calculate the z-scored brain volume with the newly split controls
+   node$mean_tissueVolume_sampleA <- mean(node$tissueVolume[rows_xy_sampleA])
+   node$sd_tissueVolume_sampleA <- sd(node$tissueVolume[rows_xy_sampleA])
+   node$zscored_tissueVolume_sampleA <- (node$tissueVolume - node$mean_tissueVolume_sampleA)/node$sd_tissueVolume_sampleA
+   node$mean_tissueVolume_sampleB <- mean(node$tissueVolume[rows_xy_sampleB])
+   node$sd_tissueVolume_sampleB <- sd(node$tissueVolume[rows_xy_sampleB])
+   node$zscored_tissueVolume_sampleB <- (node$tissueVolume - node$mean_tissueVolume_sampleB)/node$sd_tissueVolume_sampleB
+   #  # 
+ 
+    #load in the computed z-scores
+   node$model_df_A <- node$demographics %>% mutate(zscores_A = node$zscores_sampleA) %>% mutate(zscored_tissueVolume_A = node$zscored_tissueVolume_sampleA) %>% mutate(shorthand = factor(shorthand, levels = c("XY_M", "XXY_M")))
+   node$model_df_B <- node$demographics %>% mutate(zscores_B = node$zscores_sampleB) %>% mutate(zscored_tissueVolume_B = node$zscored_tissueVolume_sampleB) %>% mutate(shorthand = factor(shorthand, levels = c("XY_M", "XYY_M")))
+
+    #load in the computed z-scores
+   node$model_df_A_noTBV <- node$model_df_A
+   node$model_df_B_noTBV <- node$model_df_B
+
+#subset the correct rows
+  node$model_df_A <- node$model_df_A[rows_sampleA, ]
+  node$model_df_B <- node$model_df_B[rows_sampleB, ]
+  node$model_df_A_noTBV <- node$model_df_A_noTBV[rows_sampleA, ]
+  node$model_df_B_noTBV <- node$model_df_B_noTBV[rows_sampleB, ]
+
+#run the linear model
+  node$model_A <- summary(lm(zscores_A ~ shorthand + zscored_tissueVolume_A, data = node$model_df_A))
+  node$model_B <- summary(lm(zscores_B ~ shorthand + zscored_tissueVolume_B, data = node$model_df_B))
+  node$beta_A_noTBV <- summary(lm(zscores_A ~ shorthand , data = node$model_df_A_noTBV))
+  node$beta_B_noTBV <- summary(lm(zscores_B ~ shorthand , data = node$model_df_B_noTBV))
+ 
+#store the beta coefficients
+  node$beta_A_m[i] <- node$model_A$coefficients["shorthandXXY_M", "Estimate"]
+  node$beta_B_m[i] <- node$model_B$coefficients["shorthandXYY_M", "Estimate"]
+  node$beta_A_m_noTBV[i] <- node$beta_A_noTBV$coefficients["shorthandXXY_M", "Estimate"]
+  node$beta_B_m_noTBV[i] <- node$beta_B_noTBV$coefficients["shorthandXYY_M", "Estimate"]
+  
+  node$sigma_beta_A_m[i] <- node$model_A$coefficients["shorthandXXY_M", "Std. Error"]
+  node$sigma_beta_B_m[i] <- node$model_B$coefficients["shorthandXYY_M", "Std. Error"]
+  node$sigma_beta_A_m_noTBV[i] <- node$beta_A_noTBV$coefficients["shorthandXXY_M", "Std. Error"]
+  node$sigma_beta_B_m_noTBV[i] <- node$beta_B_noTBV$coefficients["shorthandXYY_M", "Std. Error"]
+  }
+})  
+```
+
+
+## Extract 
+
+## Beta values for each linear model at the leaves for models with and without TBV correction
+```{r}
+Beta_sampleA_Males_withTVB <- LR_tree_pruned$Get("beta_A_m", filterFun = isLeaf) %>% as_tibble()
+Beta_sampleB_Males_withTVB <- LR_tree_pruned$Get("beta_B_m", filterFun = isLeaf) %>% as_tibble()
+Beta_sampleA_Males_noTBV <- LR_tree_pruned$Get("beta_A_m_noTBV", filterFun = isLeaf) %>% as_tibble()
+Beta_sampleB_Males_noTBV <- LR_tree_pruned$Get("beta_B_m_noTBV", filterFun = isLeaf) %>% as_tibble()
+```
+
+### Beta values for each linear model across the whole tree with and without TBV correction
+```{r}
+Beta_sampleA_Males_tree_withTVB <- LR_tree_pruned$Get("beta_A_m") %>% as_tibble()
+Beta_sampleB_Males_tree_withTVB <- LR_tree_pruned$Get("beta_B_m") %>% as_tibble()
+Beta_sampleA_Males_tree_noTBV <- LR_tree_pruned$Get("beta_A_m_noTBV") %>% as_tibble()
+Beta_sampleB_Males_tree_noTBV <- LR_tree_pruned$Get("beta_B_m_noTBV") %>% as_tibble()
+```
+
+## Transpose 
+
+### Beta values that control for TBV at leaves & tree
+```{r}
+Beta_sampleA_Males_withTVB_transpose <- as.data.frame(t(as.matrix(Beta_sampleA_Males_withTVB)))
+Beta_sampleB_Males_withTVB_transpose <- as.data.frame(t(as.matrix(Beta_sampleB_Males_withTVB)))
+Beta_sampleA_Males_withTVB_tree_transpose <- as.data.frame(t(as.matrix(Beta_sampleA_Males_tree_withTVB)))
+Beta_sampleB_Males_withTVB_tree_transpose <- as.data.frame(t(as.matrix(Beta_sampleB_Males_tree_withTVB)))
+```
+
+### Beta values that do NOT control for TBV at leaves & tree
+```{r}
+Beta_sampleA_Males_noTVB_transpose <- as.data.frame(t(as.matrix(Beta_sampleA_Males_noTBV)))
+Beta_sampleB_Males_noTVB_transpose <- as.data.frame(t(as.matrix(Beta_sampleB_Males_noTBV)))
+Beta_sampleA_Males_noTVB_tree_transpose <- as.data.frame(t(as.matrix(Beta_sampleA_Males_tree_noTBV)))
+Beta_sampleB_Males_noTVB_tree_transpose <- as.data.frame(t(as.matrix(Beta_sampleB_Males_tree_noTBV)))
+```
+
+
+## Look at the mean and sd of the beta values calculated above
+```{r}
+LR_tree_pruned$Do(function(node){
+  #for XXY males
+  node$beta_A_m_mean <- mean(node$beta_A_m)
+  node$beta_A_m_sd <- sd(node$beta_A_m)
+  node$beta_A_m_noTBV_mean <- mean(node$beta_A_m_noTBV)
+  node$beta_A_m_noTBV_sd <- sd(node$beta_A_m_noTBV)
+  #for XYY males
+  node$beta_B_m_mean <- mean(node$beta_B_m)
+  node$beta_B_m_sd <- sd(node$beta_B_m)
+  node$beta_B_m_noTBV_mean <- mean(node$beta_B_m_noTBV)
+  node$beta_B_m_noTBV_sd <- sd(node$beta_B_m_noTBV)
+})
+```
+
+## Store the mean and sd for the leaves for XXY 
+```{r}
+beta_means_wTBV_XXY <- LR_tree_pruned$Get("beta_A_m_mean", filterFun = isLeaf)
+beta_sds_wTBV_XXY <- LR_tree_pruned$Get("beta_A_m_sd", filterFun = isLeaf)
+beta_means_noTBV_XXY <- LR_tree_pruned$Get("beta_A_m_noTBV_mean", filterFun = isLeaf)
+beta_sds_noTBV_XXY <- LR_tree_pruned$Get("beta_A_m_noTBV_sd", filterFun = isLeaf)
+## store the mean and sd for the leaves for XYY 
+beta_means_wTBV_XYY <- LR_tree_pruned$Get("beta_B_m_mean", filterFun = isLeaf)
+beta_sds_wTBV_XYY <- LR_tree_pruned$Get("beta_B_m_sd", filterFun = isLeaf)
+beta_means_noTBV_XYY <- LR_tree_pruned$Get("beta_B_m_noTBV_mean", filterFun = isLeaf)
+beta_sds_noTBV_XYY <- LR_tree_pruned$Get("beta_B_m_noTBV_sd", filterFun = isLeaf)
+```
+
+
+# Correlating beta values
+
+### Males with TBV correction, just leaves
+Correlate effect sizes such that column 1 is correlated with column 2 etc...
+```{r}
+split_ctl_corr_males_tbv <- rep(0, 1000)
+for(i in 1:1000) {
+  split_ctl_corr_males_tbv[i] <- cor(Beta_sampleA_Males_withTVB_transpose[ ,i],Beta_sampleB_Males_withTVB_transpose[,i])}
+summary(split_ctl_corr_males_tbv)
+```
+
+### Plot distribution of correlations
+```{r}
+split_corr_wTBV <-split_ctl_corr_males_tbv %>% as.data.frame()
+vec1 <- rep(c("Split control corr"), 10000)
+df_split_corr_wTBV <- cbind(vec1, split_corr_wTBV)
+colnames(df_split_corr_wTBV)<- c("vec1", "correlation")
+
+pdf(file = "/Users/gumae2/Documents/Humouse_paper/Figures/mouse_unilateral/Mouse_Split_Corr_distribution_leaves_wTBV.pdf",
+     width = 5,
+     height = 4)
+ggplot(df_split_corr_wTBV, aes(x=correlation, fill="red")) +
+    geom_density(alpha=.3) +
+   scale_fill_manual(labels = NULL, name=NULL, values=c('red'))+
+    theme_classic()+ xlab("Correlation coefficient")+ylab("Density")+
+   theme(text = element_text(size = 14))+
+    geom_vline(xintercept=c(0))
+```
+
+### Plot example beta coefficients
+```{r}
+summary(cor(Beta_sampleA_Males_withTVB_transpose[,35], Beta_sampleB_Males_withTVB_transpose[,35]))
+
+pdf(file = "/Users/gumae2/Documents/Humouse_paper/Figures/mouse_unilateral/Representative_beta_split_corr_wTBV_leaves.pdf",
+     width = 5,
+     height = 4)
+sample_beta_wTBV_leaves<-as.data.frame(cbind(Beta_sampleA_Males_withTVB_transpose[,34], Beta_sampleB_Males_withTVB_transpose[,34]))
+colnames(sample_beta_wTBV_leaves) <- c("XXY_sampleA", "XYY_sampleB")
+ggplot(sample_beta_wTBV_leaves, aes(x=XXY_sampleA, y=XYY_sampleB)) + 
+  geom_point(size=2, alpha=0.8) + geom_smooth(method=lm)  + geom_abline() + 
+  theme_classic()+xlab("Beta XXY_M")+ ylab("Beta XYY_M")+
+  theme(axis.text=element_text(size=12),
+        axis.title=element_text(size=14))+ 
+  xlim(-1.5,1.5) + ylim(-1.5,1.5)
+```
+
+#### Males with TBV correction whole tree
+```{r}
+split.pair.cors.effs_males_tree_tbv <- rep(0, 1000)
+for(i in 1:1000) {
+  split.pair.cors.effs_males_tree_tbv[i] <- cor(Beta_sampleA_Males_withTVB_tree_transpose[,i], Beta_sampleB_Males_withTVB_tree_transpose[,i])}
+summary(split.pair.cors.effs_males_tree_tbv)
+```
+### Plot distribution of correlations
+```{r}
+split_corr_wTBV_tree <-split.pair.cors.effs_males_tree_tbv %>% as.data.frame()
+vec1 <- rep(c("Split control corr"), 10000)
+df_split_corr_wTBV_tree <- cbind(vec1, split_corr_wTBV_tree)
+colnames(df_split_corr_wTBV_tree)<- c("vec1", "correlation")
+
+pdf(file = "/Users/gumae2/Documents/Humouse_paper/Figures/mouse_unilateral/Mouse_Split_Corr_distribution_tree_WTBV.pdf",
+     width = 5,
+     height = 4)
+
+ggplot(df_split_corr_wTBV_tree, aes(x=correlation, fill="red")) +
+    geom_density(alpha=.3) +
+   scale_fill_manual(labels = NULL, name=NULL, values=c('red'))+
+    theme_classic()+ xlab("Correlation coefficient")+ylab("Density")+
+   theme(text = element_text(size = 14))+
+    geom_vline(xintercept=c(0))
+```
+### Plot example beta coefficients
+```{r}
+summary(cor(Beta_sampleA_Males_withTVB_tree_transpose[,35], Beta_sampleB_Males_withTVB_tree_transpose[,35]))
+
+pdf(file = "/Users/gumae2/Documents/Humouse_paper/Figures/mouse_unilateral/Representative_beta_split_corr_wTBV_tree_1.pdf",
+     width = 5,
+     height = 4)
+sample_beta_wTBV_tree<-as.data.frame(cbind(Beta_sampleA_Males_withTVB_tree_transpose[,35], Beta_sampleB_Males_withTVB_tree_transpose[,35]))
+colnames(sample_beta_wTBV_tree) <- c("XXY_samleA", "XYY_sampleB")
+ggplot(sample_beta_wTBV_tree, aes(x=XXY_samleA, y=XYY_sampleB)) + 
+  geom_point() + geom_smooth(method=lm)  + geom_abline() + 
+  theme_classic()+xlab("Beta XXY_M")+ ylab("Beta XYY_M")+
+  theme(axis.text=element_text(size=12),
+        axis.title=element_text(size=14))+ 
+  xlim(-1.5,1.5) + ylim(-1.5,1.5)
+```
+
+
+### Males without TBV correction, just leaves
+```{r}
+split.pair.cors.effs_males_notbv <- rep(0, 1000)
+for(i in 1:1000) {
+  split.pair.cors.effs_males_notbv[i] <- cor(Beta_sampleA_Males_noTVB_transpose[,i], Beta_sampleB_Males_noTVB_transpose[,i])}
+summary(split.pair.cors.effs_males_notbv)
+```
+
+### Plot distribution of correlations
+```{r}
+split_corr_noTBV_leaves <-split.pair.cors.effs_males_notbv %>% as.data.frame()
+vec1 <- rep(c("Split control corr"), 10000)
+df_split_corr_noTBV_leaves <- cbind(vec1, split_corr_noTBV_leaves)
+colnames(df_split_corr_noTBV_leaves)<- c("vec1", "correlation")
+
+pdf(file = "/Users/gumae2/Documents/Humouse_paper/Figures/mouse_unilateral/Mouse_Split_Corr_distribution_leaves_noTBV.pdf",
+     width = 5,
+     height = 4)
+
+ggplot(df_split_corr_noTBV_leaves, aes(x=correlation, fill="red")) +
+    geom_density(alpha=.3) +
+   scale_fill_manual(labels =NULL, name=NULL, values=c('red'))+
+    theme_classic()+ xlab("Correlation coefficient")+ylab("Density")+
+   theme(text = element_text(size = 14))+
+    geom_vline(xintercept=c(0))
+```
+### Plot example beta coefficients
+```{r}
+pdf(file = "/Users/gumae2/Documents/Humouse_paper/Figures/mouse_unilateral/Representative_beta_split_corr_noTBV_leaves.pdf",
+     width = 5,
+     height = 4)
+summary(cor(Beta_sampleA_Males_noTVB_transpose[,35], Beta_sampleB_Males_noTVB_transpose[,35]))
+
+sample_beta_noTBV_leaves<-as.data.frame(cbind(Beta_sampleA_Males_noTVB_transpose[,35], Beta_sampleB_Males_noTVB_transpose[,35]))
+colnames(sample_beta_noTBV_leaves) <- c("XXY_sampleA", "XYY_sampleB")
+ggplot(sample_beta_noTBV_leaves, aes(x=XXY_sampleA, y=XYY_sampleB)) + 
+  geom_point() + geom_smooth(method=lm)  + geom_abline() + 
+  theme_classic()+xlab("Beta XXY_M")+ ylab("Beta XYY_M")+
+  theme(axis.text=element_text(size=12),
+        axis.title=element_text(size=14))+ 
+  xlim(-1.5,1.5) + ylim(-1.5,1.5)
+```
+
+
+#### Males without TBV correction, across whole tree
+```{r}
+split.pair.cors.effs_males_tree_notbv <- rep(0, 1000)
+for(j in 1:1000) {
+  split.pair.cors.effs_males_tree_notbv[i] <- cor(Beta_sampleA_Males_noTVB_tree_transpose[,j], Beta_sampleB_Males_noTVB_tree_transpose[,j])}
+summary(split.pair.cors.effs_males_tree_notbv)
+```
+
+### Plot distribution of correlations
+```{r}
+split_corr_noTBV_tree <-split.pair.cors.effs_males_tree_notbv %>% as.data.frame()
+vec1 <- rep(c("Split control corr"), 10000)
+df_split_corr_noTBV_tree <- cbind(vec1, split_corr_noTBV_tree)
+colnames(df_split_corr_noTBV_tree)<- c("vec1", "correlation")
+
+pdf(file = "/Users/gumae2/Documents/Humouse_paper/Figures/mouse_unilateral/Mouse_Split_Corr_distribution_tree_noTBV.pdf",
+     width = 5,
+     height = 4)
+
+ggplot(df_split_corr_noTBV_tree, aes(x=correlation, fill="red")) +
+    geom_density(alpha=.3) +
+   scale_fill_manual(labels = NULL, name=NULL, values=c('red'))+
+    theme_classic()+ xlab("Correlation coefficient")+ylab("Density")+
+   theme(text = element_text(size = 14))+
+    geom_vline(xintercept=c(0))
+```
+### Plot example beta coefficients
+```{r}
+pdf(file = "/Users/gumae2/Documents/Humouse_paper/Figures/mouse_unilateral/Representative_beta_split_corr_noTBV_tree.pdf",
+     width = 5,
+     height = 4)
+
+summary(cor(Beta_sampleA_Males_noTVB_tree_transpose[,35], Beta_sampleB_Males_noTVB_tree_transpose[,35]))
+
+sample_beta_noTBV_tree<-as.data.frame(cbind(Beta_sampleA_Males_noTVB_tree_transpose[,35], Beta_sampleB_Males_noTVB_tree_transpose[,35]))
+colnames(sample_beta_noTBV_tree) <- c("XXY_sampleA", "XYY_sampleB")
+ggplot(sample_beta_noTBV_tree, aes(x=XXY_sampleA, y=XYY_sampleB)) + 
+  geom_point() + geom_smooth(method=lm)  + geom_abline() + 
+  theme_classic()+xlab("Beta XXY_M")+ ylab("Beta XYY_M")+
+  theme(axis.text=element_text(size=12),
+        axis.title=element_text(size=14))+ 
+  xlim(-1.5,1.5) + ylim(-1.5,1.5)
+```
+
+
+# Directionality of effects
+
+Here we will investigate whether the added X or Y chromosomes have similar effects on brain anatomy and try to identify the regions that are either both increased or decreased due to the anueploidy, and that are consistent across split halves (i.e. both increased or decreased in 95 of the 100 splits) 
+
+### First we will look at the leaves with TBV effects
+```{r}
+#Set up a matrix in which to store the directionality of effects
+congruence.holder.withTBV <- data.frame(both.pos=rep(NA, dim(Beta_sampleA_Males_withTVB_transpose)[1]), both.neg=rep(NA, dim(Beta_sampleA_Males_withTVB_transpose)[1]))
+rownames(congruence.holder.withTBV) <- rownames(Beta_sampleA_Males_withTVB_transpose)
+```
+
+### Loop over all regions and assign congruence
+Here we are looping through each beta value for the 1000 splits, and determining which rows are either both positive in the XXY and XYY groups, or both negative in the two groups. With this information, we can then sum the number of times (across the 1000 splits) that a region is positive or negative in both groups. This way, we can identify regions that are consistenlty congruently increased or decreased across groups and splits (as a measure of reliability)
+```{r}
+for (i in 1:dim(Beta_sampleA_Males_withTVB_transpose)[1]) {
+  bound.rows <- rbind(Beta_sampleA_Males_withTVB_transpose[i,], Beta_sampleB_Males_withTVB_transpose [i,])
+  congruence <- apply(bound.rows, 2, function(x) sum(x>0))
+  congruence.holder.withTBV$both.pos[i] <- sum(congruence==2)
+  congruence.holder.withTBV$both.neg[i] <- sum(congruence==0)
+}
+```
+
+### Arrange lists
+```{r}
+arrange(congruence.holder.withTBV, desc(both.neg)) %>% filter(both.neg>949)
+arrange(congruence.holder.withTBV, desc(both.pos)) %>% filter(both.pos>949)
+```
+
+### Save outputs
+```{r}
+congruence.holder.withTBV <- as.tibble(congruence.holder.withTBV)
+label_names <- LR_tree_pruned$Get("levelName", filterFun = isLeaf) %>% as.data.frame()
+congruence_males_withTBV <-  cbind(label_names, congruence.holder.withTBV)
+write.csv(congruence_males_withTBV, file="/Users/gumae2/Documents/Humouse/analysis/split-half-analysis-outputs/congruence_beta_withTBV_males_1000_nowm_LR_split.csv")
+```
+
+### Load in colour palette
+
+```{r}
+labelVol <- mincArray(mincGetVolume("/Users/gumae2/Documents/Humouse/input_data/DSURQE_40micron_labels.mnc"))
+anatVol <- mincArray(mincGetVolume("/Users/gumae2/Documents/Humouse/input_data/DSURQE_40micron_average.mnc"))
+labelCols <- hanatToVolume(treeVols_LR, labelVol, "color_hex_triplet") #load in the Allen atlas colours to display next to the results
+
+positive_cols <- function() {
+  getOption("MRIcrotomeCol", colorRampPalette(c("yellow","red","firebrick"))(255))
+}
+
+negative_cols <- function() {
+  getOption("MRIcrotomeRcol", colorRampPalette(c("turquoise3","royalblue","navyblue"))(255))
+}
+```
+
+### Merge congruence maps
+```{r}
+congruence_males_withTBV$label<-rownames(congruence_males_withTBV)
+congruence_positive <- congruence_males_withTBV$both.pos > 949
+congruence_positive_wTBV <-congruence_males_withTBV[congruence_positive,]
+congruence_males_withTBV$both.neg.neg <- congruence_males_withTBV$both.neg*(-1)
+congruence_negative <- congruence_males_withTBV$both.neg.neg< -949
+congruence_negative_wTBV <-congruence_males_withTBV[congruence_negative,]
+congruence_pos_neg_wTBV <- congruence_males_withTBV[congruence_positive | congruence_negative, ]
+sig_beta_XYY_tree<-left_join(congruence_males_withTBV, congruence_pos_neg_wTBV, by = "label")
+
+sig_beta_XYY_tree$congruence <- sig_beta_XYY_tree$both.pos.y + sig_beta_XYY_tree$both.neg.neg.y
+```
+
+## Next we will look at the leaves without TBV effects
+```{r}
+congruence.holder.noTBV <- data.frame(both.pos=rep(NA, dim(Beta_sampleA_Males_noTVB_transpose)[1]), both.neg=rep(NA, dim(Beta_sampleA_Males_noTVB_transpose)[1]))
+rownames(congruence.holder.noTBV) <- rownames(Beta_sampleA_Males_noTVB_transpose)
+
+#Loop over all regions and assign congruence
+
+for (i in 1:dim(Beta_sampleA_Males_noTVB_transpose)[1]) {
+  bound.rows <- rbind(Beta_sampleA_Males_noTVB_transpose[i,], Beta_sampleB_Males_noTVB_transpose [i,])
+  congruence <- apply(bound.rows, 2, function(x) sum(x>0))
+  congruence.holder.noTBV$both.pos[i] <- sum(congruence==2)
+  congruence.holder.noTBV$both.neg[i] <- sum(congruence==0)
+}
+
+#Arrange lists
+arrange(congruence.holder.noTBV, desc(both.neg)) %>% filter(both.neg>950)
+arrange(congruence.holder.noTBV, desc(both.pos)) %>% filter(both.pos>950)
+
+#Save Outputs
+congruence.holder.noTBV <- as.tibble(congruence.holder.noTBV)
+label_names <- LR_tree_pruned$Get("levelName", filterFun = isLeaf) %>% as.data.frame()
+congruence_males_noTBV <-  cbind(label_names, congruence.holder.noTBV)
+write.csv(congruence_males_noTBV, file="/Users/gumae2/Documents/Humouse/analysis/split-half-analysis-outputs/congruence_beta_noTBV_males1000_LRsplit.csv")
+```
+
+### Merge congruence maps
+```{r}
+congruence_males_noTBV$label<-rownames(congruence_males_noTBV)
+congruence_positive <- congruence_males_noTBV$both.pos > 949
+congruence_positive_noTBV <-congruence_males_noTBV[congruence_positive,]
+congruence_males_noTBV$both.neg.neg <- congruence_males_noTBV$both.neg*(-1)
+congruence_negative <- congruence_males_noTBV$both.neg.neg< -949
+congruence_negative_noTBV <-congruence_males_noTBV[congruence_negative,]
+congruence_pos_neg_noTBV <- congruence_males_noTBV[congruence_positive | congruence_negative, ]
+sig_beta_XYY_tree_noTBV<-left_join(congruence_males_noTBV, congruence_pos_neg_noTBV, by = "label")
+
+sig_beta_XYY_tree_noTBV$congruence <- sig_beta_XYY_tree_noTBV$both.pos.y + sig_beta_XYY_tree_noTBV$both.neg.neg.y
+```
+
+
+## Next we will look across the tree with TBV effects
+```{r}
+congruence.holder.tree.withTBV <- data.frame(both.pos=rep(NA, dim(Beta_sampleA_Males_withTVB_tree_transpose)[1]), both.neg=rep(NA, dim(Beta_sampleA_Males_withTVB_tree_transpose)[1]))
+#head(congruence.holder.tree.withTBV)
+rownames(congruence.holder.tree.withTBV) <- rownames(Beta_sampleA_Males_withTVB_tree_transpose)
+
+#Loop over all regions and assign congruence
+
+for (i in 1:dim(Beta_sampleA_Males_withTVB_tree_transpose)[1]) {
+  bound.rows <- rbind(Beta_sampleA_Males_withTVB_tree_transpose[i,], Beta_sampleB_Males_withTVB_tree_transpose [i,])
+  congruence <- apply(bound.rows, 2, function(x) sum(x>0))
+  congruence.holder.tree.withTBV$both.pos[i] <- sum(congruence==2)
+  congruence.holder.tree.withTBV$both.neg[i] <- sum(congruence==0)
+}
+
+#Arrange lists
+arrange(congruence.holder.tree.withTBV, desc(both.neg)) %>% filter(both.neg>949)
+arrange(congruence.holder.tree.withTBV, desc(both.pos)) %>% filter(both.pos>949)
+
+#Save Outputs
+congruence.holder.tree.withTBV <- as.tibble(congruence.holder.tree.withTBV)
+label_names <- LR_tree_pruned$Get("levelName") %>% as.data.frame()
+congruence_males_tree_withTBV <-  cbind(label_names, congruence.holder.tree.withTBV)
+congruence_males_tree_withTBV$both.neg.neg <- congruence_males_tree_withTBV$both.neg*(-1)
+write.csv(congruence_males_tree_withTBV, file="/Users/gumae2/Documents/Humouse/analysis/split-half-analysis-outputs/congruence_beta_wholetree_withTBV_males_1000_LRsplit.csv")
+```
+
+### Merge congruence maps
+This way we can plot the regions that are both positive or both negative in one brain map. To do so, we will convert the values for the congruently negative regions to be negative, so that they take on negative colours (blue)
+
+```{r}
+congruence_males_tree_withTBV$label<-rownames(congruence_males_tree_withTBV)
+congruence_positive <- congruence_males_tree_withTBV$both.pos > 949
+congruence_positive_wTBV <-congruence_males_tree_withTBV[congruence_positive,]
+congruence_males_tree_withTBV$both.neg.neg <- congruence_males_tree_withTBV$both.neg*(-1)
+congruence_negative <- congruence_males_tree_withTBV$both.neg.neg< -949
+congruence_negative_wTBV <-congruence_males_tree_withTBV[congruence_negative,]
+congruence_pos_neg_wTBV <- congruence_males_tree_withTBV[congruence_positive | congruence_negative, ]
+congruence_tree<-left_join(congruence_males_tree_withTBV, congruence_pos_neg_wTBV, by = "label")
+
+congruence_tree$congruence <- congruence_tree$both.pos.y + congruence_tree$both.neg.neg.y
+```
+
+### Attach congruence values to tree for plotting
+```{r}
+LR_tree_pruned$Do(function(node){
+  ind_cong <- which(congruence_tree$label == node$name)
+  node$congruence <- congruence_tree$congruence[ind_cong]
+  })
+
+#congruence_test <- tree$Get("congruence") %>% as_tibble()
+```
+
+### Both positive and both negative congruence map
+```{r}
+pdf(file = "/Users/gumae2/Documents/Humouse_paper/Figures/mouse_unilateral/Mouse_congruence_tree_wTBV_1000_nowm_LRsplit_1.pdf",   # The directory you want to save the file in
+    width = 3.5, # The width of the plot in inches
+    height = 6) # The height of the plot in inches
+
+congruence_wTBV <- hanatToVolume(LR_tree_pruned, labelVol, "congruence") #convert congruence map into mincarray
+sliceSeries(nrow=7, ncol=1, begin=70, end=342) %>% 
+  anatomy(anatVol, low=700, high=1400) %>% overlay(labelCols, low=0, high=1) %>% addtitle("Atlas") %>% 
+  sliceSeries() %>% anatomy() %>%
+  overlay(congruence_wTBV, low=950, high=1000, col = positive_cols(), rCol=negative_cols(), symmetric = T) %>%
+  legend("Congruence (1000 splits)") %>% addtitle("Congruence") %>% draw()
+```
+
+
+## Finally, we will look across the tree without controlling for TBV effects
+```{r}
+congruence.holder.tree.noTBV <- data.frame(both.pos=rep(NA, dim(Beta_sampleA_Males_noTVB_tree_transpose)[1]), both.neg=rep(NA, dim(Beta_sampleA_Males_noTVB_tree_transpose)[1]))
+#head(congruence.holder.tree.noTBV)
+rownames(congruence.holder.tree.noTBV) <- rownames(Beta_sampleA_Males_noTVB_tree_transpose)
+
+#Loop over all regions and assign congruence
+for (i in 1:dim(Beta_sampleA_Males_noTVB_tree_transpose)[1]) {
+  bound.rows <- rbind(Beta_sampleA_Males_noTVB_tree_transpose[i,], Beta_sampleB_Males_noTVB_tree_transpose [i,])
+  congruence <- apply(bound.rows, 2, function(x) sum(x>0))
+  congruence.holder.tree.noTBV$both.pos[i] <- sum(congruence==2)
+  congruence.holder.tree.noTBV$both.neg[i] <- sum(congruence==0)
+}
+
+#Arrange lists
+arrange(congruence.holder.tree.noTBV, desc(both.neg)) %>% filter(both.neg>949)
+arrange(congruence.holder.tree.noTBV, desc(both.pos)) %>% filter(both.pos>949)
+
+#Save Outputs
+congruence.holder.tree.noTBV <- as.tibble(congruence.holder.tree.noTBV)
+label_names <- LR_tree_pruned$Get("levelName") %>% as.data.frame()
+congruence_males_tree_noTBV <-  cbind(label_names, congruence.holder.tree.noTBV)
+write.csv(congruence_males_tree_noTBV, file="/Users/gumae2/Documents/Humouse/analysis/split-half-analysis-outputs/congruence_beta_wholetree_noTBV_males1000.csv")
+```
+
+### Merge congruence maps
+```{r}
+congruence_males_tree_noTBV$label<-rownames(congruence_males_tree_noTBV)
+congruence_positive <- congruence_males_tree_noTBV$both.pos > 949
+congruence_positive_wTBV <-congruence_males_tree_noTBV[congruence_positive,]
+congruence_males_tree_noTBV$both.neg.neg <- congruence_males_tree_noTBV$both.neg*(-1)
+congruence_negative <- congruence_males_tree_noTBV$both.neg.neg< -949
+congruence_negative_wTBV <-congruence_males_tree_noTBV[congruence_negative,]
+congruence_pos_neg_wTBV <- congruence_males_tree_noTBV[congruence_positive | congruence_negative, ]
+congruence_tree_noTBV<-left_join(congruence_males_tree_withTBV, congruence_pos_neg_wTBV, by = "label")
+
+congruence_tree_noTBV$congruence <- congruence_tree_noTBV$both.pos.y + congruence_tree_noTBV$both.neg.neg.y
+```
+
+### Attach congruence values to tree for plotting
+```{r}
+LR_tree_pruned$Do(function(node){
+  ind_cong <- which(congruence_tree_noTBV$label == node$name)
+  node$congruence_noTBV <- congruence_tree_noTBV$congruence[ind_cong]
+  })
+
+#congruence_test <- tree$Get("congruence") %>% as_tibble()
+```
+
+### Both positive and both negative congruence map
+```{r, fig.width=2.5,fig.height=3.5}
+pdf(file = "/Users/gumae2/Documents/Humouse_paper/Figures/mouse_unilateral/Mouse_congruence_tree_noTBV_1000_nowm.pdf",   # The directory you want to save the file in
+    width = 3.2, # The width of the plot in inches
+    height = 6) # The height of the plot in inches
+
+congruence_noTBV <- hanatToVolume(LR_tree_pruned, labelVol, "congruence_noTBV") #convert congruence map into mincarray
+sliceSeries(nrow=7, ncol=1, begin=62, end=342) %>%
+  anatomy(anatVol, low=700, high=1400) %>% overlay(labelCols, low=0, high=1) %>% addtitle("Atlas") %>% 
+  sliceSeries() %>% anatomy() %>%
+  overlay(congruence_noTBV, low=950, high=1000, col = positive_cols(), rCol=negative_cols(), symmetric = T) %>%
+  legend("Congruence (1000 splits)") %>% addtitle("Congruence") %>% draw()
+```
+
+
+# Identifying positive and negative beta values  for all samples
+
+Next we will look at the sign per group for XXY (sample A) and XYY(sample B) with TBV as a covariate, and without, only at the leaves
+```{r}
+sign.holder.leaves <- data.frame(pos.XXY=rep(NA, dim(Beta_sampleA_Males_withTVB_transpose)[1]), neg.XXY=rep(NA, dim(Beta_sampleA_Males_withTVB_transpose)[1]), pos.XYY=rep(NA, dim(Beta_sampleA_Males_withTVB_transpose)[1]), neg.XYY=rep(NA, dim(Beta_sampleA_Males_withTVB_transpose)[1]), pos.noTBV.XXY=rep(NA, dim(Beta_sampleA_Males_withTVB_transpose)[1]), neg.noTBV.XXY=rep(NA, dim(Beta_sampleA_Males_withTVB_transpose)[1]), pos.noTBV.XYY=rep(NA, dim(Beta_sampleA_Males_withTVB_transpose)[1]), neg.noTBV.XYY=rep(NA, dim(Beta_sampleA_Males_withTVB_transpose)[1]))
+#head(sign.holder.leaves)
+rownames(sign.holder.leaves) <- rownames(Beta_sampleA_Males_withTVB_transpose)
+
+#Loop over all regions and assign congruence
+for (i in 1:dim(Beta_sampleA_Males_withTVB_transpose)[1]) {
+  #With TBV as covariate (leaves)
+  sign.pos.XXY <- apply(Beta_sampleA_Males_withTVB_transpose[i,], 2, function(x) x>0)
+  sign.neg.XXY <- apply(Beta_sampleA_Males_withTVB_transpose[i,], 2, function(x) x<0)
+  sign.pos.XYY <- apply(Beta_sampleB_Males_withTVB_transpose[i,], 2, function(x) x>0)
+  sign.neg.XYY <- apply(Beta_sampleB_Males_withTVB_transpose[i,], 2, function(x) x<0)
+  #Without TBV as covariate (leaves)
+  sign.pos.noTBV.XXY <- apply(Beta_sampleA_Males_noTVB_transpose[i,], 2, function(x) x>0)
+  sign.neg.noTBV.XXY <- apply(Beta_sampleA_Males_noTVB_transpose[i,], 2, function(x) x<0)
+  sign.pos.noTBV.XYY <- apply(Beta_sampleB_Males_noTVB_transpose[i,], 2, function(x) x>0)
+  sign.neg.noTBV.XYY <- apply(Beta_sampleB_Males_noTVB_transpose[i,], 2, function(x) x<0)
+
+  ##how many times it's positive (over the 100 splits)
+  #With TBV as covariate (leaves)
+  sign.holder.leaves$pos.XXY[i] <- sum(sign.pos.XXY>0)
+  sign.holder.leaves$neg.XXY[i] <- sum(sign.neg.XXY>0)
+  sign.holder.leaves$pos.XYY[i] <- sum(sign.pos.XYY>0)
+  sign.holder.leaves$neg.XYY[i] <- sum(sign.neg.XYY>0)
+ #Without TBV as covariate (leaves)
+  sign.holder.leaves$pos.noTBV.XXY[i] <- sum(sign.pos.noTBV.XXY>0)
+  sign.holder.leaves$neg.noTBV.XXY[i] <- sum(sign.neg.noTBV.XXY>0)
+  sign.holder.leaves$pos.noTBV.XYY[i] <- sum(sign.pos.noTBV.XYY>0)
+  sign.holder.leaves$neg.noTBV.XYY[i] <- sum(sign.neg.noTBV.XYY>0)
+}
+
+#Arrange lists with TBV as covariate
+arrange(sign.holder.leaves, desc(pos.XXY)) %>% filter(pos.XXY>950)
+arrange(sign.holder.leaves, desc(neg.XXY)) %>% filter(neg.XXY>950)
+arrange(sign.holder.leaves, desc(pos.XYY)) %>% filter(pos.XYY>950)
+arrange(sign.holder.leaves, desc(neg.XYY)) %>% filter(neg.XYY>950)
+#Arrange lists without TBV as covariate
+arrange(sign.holder.leaves, desc(pos.noTBV.XXY)) %>% filter(pos.noTBV.XXY>950)
+arrange(sign.holder.leaves, desc(neg.noTBV.XXY)) %>% filter(neg.noTBV.XXY>950)
+arrange(sign.holder.leaves, desc(pos.noTBV.XYY)) %>% filter(pos.noTBV.XYY>950)
+arrange(sign.holder.leaves, desc(neg.noTBV.XYY)) %>% filter(neg.noTBV.XYY>950)
+
+#Save Outputs
+sign.holder.leaves <- as.tibble(sign.holder.leaves)
+label_names <- LR_tree_pruned$Get("levelName", filterFun = isLeaf) %>% as.data.frame()
+males.sign.holder.leaves <-  cbind(label_names, sign.holder.leaves)
+
+write.csv(males.sign.holder.leaves, file="/Users/gumae2/Documents/Humouse/analysis/split-half-analysis-outputs/signs_beta_males_leaves_LRsplit.csv")
+```
+
+### Identify ROIs that are both positive in XXY and negative in XYY 95% of the time
+
+```{r}
+posXXY_negXYY <- (males.sign.holder.leaves$pos.XXY > 949) | (males.sign.holder.leaves$neg.XYY >949)
+posXXY_and_negXYY<- males.sign.holder.leaves$pos.XXY > 949 & males.sign.holder.leaves$neg.XYY >949
+posXXY_and_negXYY_list <-males.sign.holder.leaves[posXXY_and_negXYY,]
+posXXY_and_negXYY_list
+
+posXYY_and_negXXY<- males.sign.holder.leaves$pos.XYY > 949 & males.sign.holder.leaves$neg.XXY >949 
+posXYY_and_negXXY_list <-males.sign.holder.leaves[posXYY_and_negXXY,]
+posXYY_and_negXXY_list
+```
+
+Next we will look at the sign per group for XXY (sample A) and XYY(sample B) with TBV as a covariate, and without, across the whole tree
+```{r}
+sign.holder.tree <- data.frame(pos.XXY=rep(NA, dim(Beta_sampleA_Males_withTVB_tree_transpose)[1]), neg.XXY=rep(NA, dim(Beta_sampleA_Males_withTVB_tree_transpose)[1]), pos.XYY=rep(NA, dim(Beta_sampleA_Males_withTVB_tree_transpose)[1]), neg.XYY=rep(NA, dim(Beta_sampleA_Males_withTVB_tree_transpose)[1]), pos.noTBV.XXY=rep(NA, dim(Beta_sampleA_Males_withTVB_tree_transpose)[1]), neg.noTBV.XXY=rep(NA, dim(Beta_sampleA_Males_withTVB_tree_transpose)[1]), pos.noTBV.XYY=rep(NA, dim(Beta_sampleA_Males_withTVB_tree_transpose)[1]), neg.noTBV.XYY=rep(NA, dim(Beta_sampleA_Males_withTVB_tree_transpose)[1]))
+#head(sign.holder.tree)
+rownames(sign.holder.tree) <- rownames(Beta_sampleA_Males_withTVB_tree_transpose)
+
+#Loop over all regions and assign congruence
+for (i in 1:dim(Beta_sampleA_Males_withTVB_tree_transpose)[1]) {
+  #With TBV as covariate (leaves)
+  sign.pos.XXY <- apply(Beta_sampleA_Males_withTVB_tree_transpose[i,], 2, function(x) x>0)
+  sign.neg.XXY <- apply(Beta_sampleA_Males_withTVB_tree_transpose[i,], 2, function(x) x<0)
+  sign.pos.XYY <- apply(Beta_sampleB_Males_withTVB_tree_transpose[i,], 2, function(x) x>0)
+  sign.neg.XYY <- apply(Beta_sampleB_Males_withTVB_tree_transpose[i,], 2, function(x) x<0)
+  #Without TBV as covariate (leaves)
+  sign.pos.noTBV.XXY <- apply(Beta_sampleA_Males_noTVB_tree_transpose[i,], 2, function(x) x>0)
+  sign.neg.noTBV.XXY <- apply(Beta_sampleA_Males_noTVB_tree_transpose[i,], 2, function(x) x<0)
+  sign.pos.noTBV.XYY <- apply(Beta_sampleB_Males_noTVB_tree_transpose[i,], 2, function(x) x>0)
+  sign.neg.noTBV.XYY <- apply(Beta_sampleB_Males_noTVB_tree_transpose[i,], 2, function(x) x<0)
+
+  ##how many times it's positive (over the 100 splits)
+  #With TBV as covariate (leaves)
+  sign.holder.tree$pos.XXY[i] <- sum(sign.pos.XXY>0)
+  sign.holder.tree$neg.XXY[i] <- sum(sign.neg.XXY>0)
+  sign.holder.tree$pos.XYY[i] <- sum(sign.pos.XYY>0)
+  sign.holder.tree$neg.XYY[i] <- sum(sign.neg.XYY>0)
+ #Without TBV as covariate (leaves)
+  sign.holder.tree$pos.noTBV.XXY[i] <- sum(sign.pos.noTBV.XXY>0)
+  sign.holder.tree$neg.noTBV.XXY[i] <- sum(sign.neg.noTBV.XXY>0)
+  sign.holder.tree$pos.noTBV.XYY[i] <- sum(sign.pos.noTBV.XYY>0)
+  sign.holder.tree$neg.noTBV.XYY[i] <- sum(sign.neg.noTBV.XYY>0)
+}
+
+#Arrange lists with TBV as covariate
+arrange(sign.holder.tree, desc(pos.XXY)) %>% filter(pos.XXY>950)
+arrange(sign.holder.tree, desc(neg.XXY)) %>% filter(neg.XXY>950)
+arrange(sign.holder.tree, desc(pos.XYY)) %>% filter(pos.XYY>950)
+arrange(sign.holder.tree, desc(neg.XYY)) %>% filter(neg.XYY>950)
+
+#Arrange lists without TBV as covariate
+arrange(sign.holder.tree, desc(pos.noTBV.XXY)) %>% filter(pos.noTBV.XXY>950)
+arrange(sign.holder.tree, desc(neg.noTBV.XXY)) %>% filter(neg.noTBV.XXY>950)
+arrange(sign.holder.tree, desc(pos.noTBV.XYY)) %>% filter(pos.noTBV.XYY>950)
+arrange(sign.holder.tree, desc(neg.noTBV.XYY)) %>% filter(neg.noTBV.XYY>950)
+
+#Save Outputs
+sign.holder.tree <- as.tibble(sign.holder.tree)
+label_names_tree <- LR_tree_pruned$Get("levelName") %>% as.data.frame()
+males.sign.holder.tree <-  cbind(label_names_tree, sign.holder.tree)
+write.csv(males.sign.holder.tree, file="/Users/gumae2/Documents/Humouse/analysis/split-half-analysis-outputs/signs_beta_males_tree_1000_LRsplit.csv")
+
+```
+
+### Identify ROIs that are both positive in XXY and negative in XYY 95% of the time
+
+```{r}
+posXXY_negXYY <- (sign.holder.tree$pos.XXY > 949) | (sign.holder.tree$neg.XYY >949)
+posXXY_and_negXYY<- sign.holder.tree$pos.XXY > 949 & sign.holder.tree$neg.XYY >949
+posXXY_and_negXYY_list <-sign.holder.tree[posXXY_and_negXYY,]
+posXXY_and_negXYY_list
+
+posXYY_and_negXXY<- sign.holder.tree$pos.XYY > 949 & sign.holder.tree$neg.XXY >949 
+posXYY_and_negXXY_list <-sign.holder.tree[posXYY_and_negXXY,]
+posXYY_and_negXXY_list
+```
