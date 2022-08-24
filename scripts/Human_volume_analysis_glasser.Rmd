@@ -69,8 +69,8 @@ t.test(XYY_data_subcort_cort_filtered_unique$pct_diff)
 ### define data
 ```{r}
 ind <- XXY_data_subcort_cort_filtered_unique$DX_GROUP == 'NV' #First create an index getting the participants in the control group
-human_vols <- XXY_data_subcort_cort_filtered_unique[,11:ncol(XXY_data_subcort_cort_filtered_unique)] #Then subset the volumes for the control observations #vols from 54:461
-XXY_demo <- XXY_data_subcort_cort_filtered_unique[,1:10]
+human_vols <- XXY_data_subcort_cort_filtered_unique[,9:ncol(XXY_data_subcort_cort_filtered_unique)] #Then subset the volumes for the control observations #vols from 54:461
+XXY_demo <- XXY_data_subcort_cort_filtered_unique[,1:8]
 vols_NV <- human_vols[ind,]
 ```
 
@@ -214,7 +214,7 @@ zscore_df_XXY_clean <-dplyr::select(zscore_df_XXY, -"ventricle_volume", -"latera
 
 ```{r}
 # Run the lienar model across all regions
-allROI_XXY_Lm_wTBV_zscore= anatLm(~ DX_GROUP + AGE_cent + BrainSegVolNotVent.x,zscore_df_XXY_clean,zscore_df_XXY_clean[,11:ncol(zscore_df_XXY_clean)])
+allROI_XXY_Lm_wTBV_zscore= anatLm(~ DX_GROUP + AGE_cent + BrainSegVolNotVent.x,zscore_df_XXY_clean,zscore_df_XXY_clean[,9:ncol(zscore_df_XXY_clean)])
 FDR_allROI_XXY_Lm_wTBV_zscore <- anatFDR(allROI_XXY_Lm_wTBV_zscore)
 FDR_allROI_XXY_Lm_wTBV_zscore
 
@@ -245,7 +245,7 @@ write.csv(model_outputs_XXY_wTBV1, file="/Users/gumae2/Documents/Humouse_paper/T
 ### Without TBV covariate
 ```{r}
 #perform the iear model across all regions
-allROI_XXY_Lm_noTBV_zscore= anatLm(~ DX_GROUP + AGE_cent,zscore_df_XXY_clean,zscore_df_XXY_clean[,11:ncol(zscore_df_XXY_clean)])
+allROI_XXY_Lm_noTBV_zscore= anatLm(~ DX_GROUP + AGE_cent,zscore_df_XXY_clean,zscore_df_XXY_clean[,9:ncol(zscore_df_XXY_clean)])
 FDR_allROI_XXY_Lm_noTBV_zscore <- anatFDR(allROI_XXY_Lm_noTBV_zscore)
 FDR_allROI_XXY_Lm_noTBV_zscore
 
@@ -607,8 +607,8 @@ Here we repeat the above analysis in the XYY group
 ### Define data
 ```{r}
 ind <- XYY_data_subcort_cort_filtered_unique$dx_group == 'HV' #First create an index getting the participants in the control group
-human_vols_XYY <- XYY_data_subcort_cort_filtered_unique[,11:ncol(XYY_data_subcort_cort_filtered_unique)] #Then subset the volumes for the control observations; volumes 60:466
-XYY_demo <- XYY_data_subcort_cort_filtered_unique[,1:10]
+human_vols_XYY <- XYY_data_subcort_cort_filtered_unique[,9:ncol(XYY_data_subcort_cort_filtered_unique)] #Then subset the volumes for the control observations; volumes 60:466
+XYY_demo <- XYY_data_subcort_cort_filtered_unique[,1:8]
 vols_HV <- human_vols_XYY[ind,]
 ```
 
@@ -749,7 +749,7 @@ zscore_df_XYY_clean <-dplyr::select(zscore_df_XYY, -"ventricle_volume", -"latera
 
 ```{r}
 # run liner model across all ROIs
-allROI_XYY_Lm_wTBV_zscore= anatLm(~ dx_group + AGE_cent + BrainSegVolNotVent.x,zscore_df_XYY_clean,zscore_df_XYY_clean[,11:ncol(zscore_df_XYY_clean)])
+allROI_XYY_Lm_wTBV_zscore= anatLm(~ dx_group + AGE_cent + BrainSegVolNotVent.x,zscore_df_XYY_clean,zscore_df_XYY_clean[,9:ncol(zscore_df_XYY_clean)])
 FDR_allROI_XYY_Lm_wTBV_zscore <- anatFDR(allROI_XYY_Lm_wTBV_zscore)
 FDR_allROI_XYY_Lm_wTBV_zscore
 
@@ -781,7 +781,7 @@ write.csv(model_outputs_both_groups, file="/Users/gumae2/Documents/Humouse_paper
 ### Without TBV covariate
 ```{r}
 # run liner model across all ROIs
-allROI_XYY_Lm_noTBV_zscore= anatLm(~ dx_group + AGE_cent,zscore_df_XYY_clean,zscore_df_XYY_clean[,11:ncol(zscore_df_XYY_clean)])
+allROI_XYY_Lm_noTBV_zscore= anatLm(~ dx_group + AGE_cent,zscore_df_XYY_clean,zscore_df_XYY_clean[,9:ncol(zscore_df_XYY_clean)])
 FDR_allROI_XYY_Lm_noTBV_zscore <- anatFDR(allROI_XYY_Lm_noTBV_zscore)
 FDR_allROI_XYY_Lm_noTBV_zscore
 
